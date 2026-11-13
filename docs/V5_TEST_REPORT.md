@@ -4,7 +4,7 @@ Fecha: 2026-11-13. Rama: `feature/adea-v5-rescue`.
 
 ## Resultados
 
-- Suite local: 86 pruebas aprobadas, 6 omitidas sin `ADEA_REAL_DB=1`.
+- Suite local: 93 pruebas aprobadas, 6 omitidas sin `ADEA_REAL_DB=1`.
 - Integración real: 6/6 contra Oracle y SQL Server.
 - Benchmark: 8/8 casos reservados correctamente agrupados.
 - Navegador: Chrome limpio a 390, 430, 768, 1024 y 1440 px.

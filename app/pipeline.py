@@ -101,26 +101,93 @@ class Processor:
             return ocr_engine.OcrResult(out, 80.0, len(out.split()))
         return out
 
-    def _read_mrz(self, image: Image.Image) -> tuple[list[str], list[str]]:
+    def _mrz_line_boxes(self, image: Image.Image) -> list[tuple[int, int, int, int]]:
+        """Detecta tres renglones MRZ por textura horizontal, sin asumir una coordenada fija."""
+        if cv2 is None:
+            return []
+        gray = np.asarray(image.convert("L"))
+        blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT,
+                                    cv2.getStructuringElement(cv2.MORPH_RECT, (25, 7)))
+        grad = cv2.Sobel(blackhat, cv2.CV_32F, 1, 0, ksize=-1)
+        grad = np.absolute(grad)
+        span = float(grad.max() - grad.min())
+        if span <= 0:
+            return []
+        grad = (255 * (grad - grad.min()) / span).astype("uint8")
+        grad = cv2.morphologyEx(grad, cv2.MORPH_CLOSE,
+                                cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5)))
+        mask = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
+                                cv2.getStructuringElement(cv2.MORPH_RECT, (35, 3)))
+        boxes = []
+        for contour in cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+            x, y, width, height = cv2.boundingRect(contour)
+            if width > image.width * .25 and width / max(height, 1) > 4:
+                boxes.append((x, y, width, height))
+        boxes.sort(key=lambda box: box[1])
+        for start in range(max(0, len(boxes) - 5), max(0, len(boxes) - 2)):
+            group = boxes[start:start + 3]
+            if len(group) == 3 and group[-1][1] - group[0][1] < image.height * .25:
+                return group
+        return boxes[-3:] if len(boxes) >= 3 else []
+
+    def _read_detected_mrz(self, image: Image.Image) -> tuple[list[str], list[str]]:
+        boxes = self._mrz_line_boxes(image)
+        if len(boxes) != 3:
+            return [], []
+        gray = np.asarray(image.convert("L"))
+        rows = []
+        for x, y, width, height in boxes:
+            pad_y = max(3, round(height * .18))
+            crop = gray[max(0, y - pad_y):min(image.height, y + height + pad_y),
+                        max(0, x - 8):min(image.width, x + width + 8)]
+            crop = cv2.resize(crop, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+            text = self._read(Image.fromarray(crop), psm=7, whitelist=MRZ_WHITELIST, lang="eng").text
+            rows.append(text.strip().replace(" ", ""))
+        notes: list[str] = []
+        return extraction.normalize_mrz_lines("\n".join(rows), notes), notes
+
+    def _read_mrz(self, image: Image.Image, try_rotations: bool = False) -> tuple[list[str], list[str]]:
         """OCR de la banda inferior con alfabeto restringido; se elige la variante con más
         dígitos verificadores coincidentes (criterio medible)."""
-        band = image.crop((0, int(image.height * .60), image.width, image.height))
-        band = imaging.upscale_if_small(band, 1500)
         best: tuple[int, list[str], list[str]] = (-1, [], [])
         preps = [lambda b: b.convert("L"), imaging.adaptive_binarize]
         if ocr_engine.engine() == "rapidocr":
             preps = preps[:1]
-        for prep in preps:
-            try:
-                text = self._read(prep(band), psm=6, whitelist=MRZ_WHITELIST, lang="eng").text
-            except RuntimeError:
-                continue
-            notes: list[str] = []
-            lines = extraction.normalize_mrz_lines(text, notes)
-            parsed = v.parse_mrz(lines)
-            score = (3 if parsed["lineas_validas"] else 0) + sum(c["coincide"] for c in parsed["verificadores"])
-            if score > best[0]:
-                best = (score, lines, notes)
+        angles = (0, 180, 90, 270) if try_rotations else (0,)
+        for angle in angles:
+            oriented = image if angle == 0 else image.rotate(angle, expand=True)
+            if try_rotations:
+                try:
+                    lines, notes = self._read_detected_mrz(oriented)
+                except RuntimeError:
+                    lines, notes = [], []
+                parsed = v.parse_mrz(lines)
+                score = (3 if parsed["lineas_validas"] else 0) + sum(c["coincide"] for c in parsed["verificadores"])
+                if lines:
+                    notes.append(f"MRZ localizada por renglones; giro probado: {angle}°.")
+                if score > best[0]:
+                    best = (score, lines, notes)
+                if score >= 6:
+                    return best[1], best[2]
+            band = oriented.crop((0, int(oriented.height * (.70 if try_rotations else .60)),
+                                  oriented.width, oriented.height))
+            band = imaging.upscale_if_small(band, 1800 if try_rotations else 1500)
+            for prep in preps:
+                try:
+                    text = self._read(prep(band), psm=6, whitelist=MRZ_WHITELIST, lang="eng").text
+                except RuntimeError:
+                    continue
+                notes = []
+                lines = extraction.normalize_mrz_lines(text, notes)
+                parsed = v.parse_mrz(lines)
+                score = (3 if parsed["lineas_validas"] else 0) + sum(c["coincide"] for c in parsed["verificadores"])
+                if lines and angle:
+                    notes.append(f"MRZ leída tras giro de {angle}°.")
+                if score > best[0]:
+                    best = (score, lines, notes)
+                if score >= 6:
+                    return best[1], best[2]
         return best[1], best[2]
 
     def process(self, data: bytes, filename: str = "imagen.jpg", on_event: EventFn | None = None) -> dict[str, Any]:
@@ -143,7 +210,7 @@ class Processor:
             card.thumbnail((1800, 1800))
 
         # --- Comparación de estrategias de preprocesamiento (se elige por calidad de lectura medida)
-        comparison, reads = [], {}
+        comparison, reads, context_reads = [], {}, []
         candidates = imaging.variants(card)
         if ocr_engine.engine() == "rapidocr":
             # RapidOCR ya normaliza internamente y es ~5× más lento por pasada en CPU: se comparan
@@ -156,6 +223,19 @@ class Processor:
             reads[name] = (variant, res)
             comparison.append({"estrategia": name, "confianza_media": res.mean_confidence,
                                "palabras": res.words, "puntuacion": _candidate_score(res)})
+        if loc.found and card.size != original.size:
+            full_variants = imaging.variants(original)
+            context_names = ("original",) if ocr_engine.engine() == "rapidocr" else ("original", "gris_contraste")
+            for name in context_names:
+                if name not in full_variants:
+                    continue
+                emit("extraccion_ocr", f"OCR de contexto sobre imagen completa ({name})",
+                     estrategia=f"contexto_{name}")
+                res = self._read(full_variants[name], psm=6)
+                context_reads.append(res)
+                comparison.append({"estrategia": f"contexto_{name}", "confianza_media": res.mean_confidence,
+                                   "palabras": res.words, "puntuacion": _candidate_score(res),
+                                   "solo_contexto": True})
         best_name = max(reads, key=lambda k: _candidate_score(reads[k][1]))
         best_img, best_res = reads[best_name]
         orientation = "sin cambios"
@@ -177,15 +257,16 @@ class Processor:
         comparison_note = f"Mejor estrategia: {best_name}"
 
         ordered = [best_res.text] + [r.text for n, (_, r) in reads.items() if n != best_name]
-
-        # --- MRZ: banda inferior con alfabeto restringido
-        mrz_lines, mrz_notes = self._read_mrz(best_img)
-        if len(mrz_lines) != 3:  # el reverso puede venir sin pasar por la tarjeta localizada
-            alt_lines, alt_notes = self._read_mrz(original)
-            if len(alt_lines) == 3:
-                mrz_lines, mrz_notes = alt_lines, alt_notes
+        ordered += [result.text for result in context_reads]
 
         codes = decode_codes(card) or decode_codes(original)
+
+        # --- MRZ: renglones detectados y banda inferior con alfabeto restringido
+        mrz_lines, mrz_notes = self._read_mrz(card, try_rotations=bool(codes))
+        if len(mrz_lines) != 3:  # el reverso puede venir sin pasar por la tarjeta localizada
+            alt_lines, alt_notes = self._read_mrz(original, try_rotations=bool(codes))
+            if len(alt_lines) == 3:
+                mrz_lines, mrz_notes = alt_lines, alt_notes
         emit("extraccion", "Extrayendo campos, MRZ y códigos")
         info = extraction.extract(ordered, mrz_lines, codes)
         _annotate_fields(info["campos"], best_res, best_name)

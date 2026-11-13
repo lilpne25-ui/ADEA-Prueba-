@@ -68,3 +68,12 @@ def test_cross_checks_consistent_and_inconsistent():
     assert all(c["resultado"] is True for c in ok)
     other = dict(fields, clave_elector=v.validate_elector("PRDEAN98010115H678"))
     assert any(c["resultado"] is False for c in v.cross_checks(other, None))
+
+
+def test_cross_check_accepts_spanish_sex_code_in_mrz():
+    fields = {"curp": v.validate_curp("BACA001231HDFRRL09"), "clave_elector": v.missing(),
+              "apellido_paterno": v.field("BACA", v.DETECTADO)}
+    mrz = {"lineas_validas": True, "fecha_nacimiento": "001231", "sexo": "H", "apellidos": "BACA"}
+    checks = v.cross_checks(fields, mrz)
+    sex = next(check for check in checks if check["prueba"] == "CURP vs MRZ: sexo")
+    assert sex["resultado"] is True

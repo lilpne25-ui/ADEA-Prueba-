@@ -41,6 +41,46 @@ def test_compound_names_split_by_lines():
            ("DE LA CRUZ", "MARTINEZ", "MARIA DEL CARMEN")
 
 
+def test_name_and_address_consensus_removes_isolated_ocr_noise():
+    variants = [
+        TEXT.replace("DE LA CRUZ", "DE LA CRUZ XX").replace("MARIA DEL CARMEN", "ZZ MARIA DEL CARMEN QX"),
+        TEXT.replace("DE LA CRUZ", "DE LA CRUZ YY").replace("MARIA DEL CARMEN", "AA MARIA DEL CARMEN QX"),
+        TEXT.replace("C ROBLE 123 INT 4", "NOISE C ROBLE 123 INT 4"),
+    ]
+    c = extraction.extract(variants, None, [])["campos"]
+    assert c["apellido_paterno"]["valor"] == "DE LA CRUZ"
+    assert c["nombres"]["valor"] == "MARIA DEL CARMEN"
+
+
+def test_values_below_electoral_label_row_are_recovered():
+    text = TEXT.replace("ESTADO 15 SECCION 1234 MUNICIPIO 001 LOCALIDAD 0001", "FECHA DE NACIMIENTO SECCION VIGENCIA\n01/01/2000 4321 2025-2035")
+    text = text.replace("AÑO DE REGISTRO 2020 EMISION 2021 VIGENCIA 2031", "CURP AÑO DE REGISTRO\n" + SYNTH["curp"] + " 2022")
+    c = info(text)["campos"]
+    assert c["seccion"]["valor"] == "4321"
+    assert c["anio_registro"]["valor"] == "2022"
+    assert c["vigencia"]["valor"] == "2025-2035"
+
+
+def test_valid_identifier_beats_more_frequent_invalid_check_digit():
+    valid = SYNTH["curp"]
+    wrong = valid[:-1] + str((int(valid[-1]) + 1) % 10)
+    texts = [TEXT.replace(valid, wrong), TEXT.replace(valid, wrong), TEXT]
+    field = extraction.extract(texts, None, [])["campos"]["curp"]
+    assert field["valor"] == valid and field["estado"] == v.VALIDADO
+
+
+def test_address_blocks_align_by_semantics_when_label_has_noise():
+    variants = [
+        TEXT.replace("DOMICILIO", "DOMICILIO ruido junto a etiqueta"),
+        TEXT.replace("DOMICILIO", "DOMICILIO xx"),
+        TEXT,
+    ]
+    c = extraction.extract(variants, None, [])["campos"]
+    assert c["calle"]["valor"] == "C ROBLE" and c["numero_exterior"]["valor"] == "123"
+    assert c["colonia"]["valor"] == "ALAMOS" and c["codigo_postal"]["valor"] == "03400"
+    assert c["municipio_domicilio"]["valor"] == "BENITO JUAREZ"
+
+
 def test_multiline_address():
     c = info()["campos"]
     assert c["calle"]["valor"] == "C ROBLE" and c["numero_exterior"]["valor"] == "123"

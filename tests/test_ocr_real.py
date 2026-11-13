@@ -73,6 +73,16 @@ def test_perspective_card_on_background_is_localized_and_warped():
     assert run(Image.fromarray(scene))["clasificacion"] in ("ine", "revision")
 
 
+def test_vertical_card_on_large_background_is_localized_horizontally():
+    card = np.asarray(base().rotate(90, expand=True))
+    bg = np.full((1600, 1000, 3), (65, 80, 65), np.uint8)
+    y, x = 320, 210
+    bg[y:y + card.shape[0], x:x + card.shape[1]] = card
+    loc = imaging.locate_card(Image.fromarray(bg))
+    assert loc.found and loc.perspective_applied
+    assert 1.4 < loc.image.width / loc.image.height < 1.8
+
+
 def test_not_found_is_reported_honestly():
     loc = imaging.locate_card(Image.fromarray(np.random.default_rng(3).integers(0, 255, (400, 600, 3), dtype=np.uint8)))
     assert loc.found is False and not loc.perspective_applied
@@ -88,6 +98,15 @@ def test_partially_cropped_never_claims_ready_without_identifiers():
 def test_rotated_180_is_recovered():
     r = run(base().rotate(180))
     assert r["clasificacion"] in ("ine", "revision")
+
+
+def test_rotated_back_recovers_three_mrz_lines():
+    data = sample_bytes(SAMPLE_NAMES[1])
+    image = imaging.load(data).rotate(90, expand=True)
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    result = Processor().process(out.getvalue(), "reverso_girado.png")
+    assert len(result["mrz"]["lineas"]) == 3 and result["mrz"]["lineas_validas"]
 
 
 def test_negative_samples():

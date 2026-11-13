@@ -124,8 +124,9 @@ def cross_checks(fields: dict[str, dict[str, Any]], mrz: dict[str, Any] | None) 
         if curp and mrz.get("fecha_nacimiento"):
             add("CURP vs MRZ: fecha de nacimiento", curp[4:10] == mrz["fecha_nacimiento"], "YYMMDD")
         if curp and mrz.get("sexo"):
-            add("CURP vs MRZ: sexo", {"H": "M", "M": "F"}.get(curp[10]) == mrz["sexo"],
-                "CURP usa H/M; el MRZ usa M/F")
+            compatible = {"H": {"H", "M"}, "M": {"M", "F"}}
+            add("CURP vs MRZ: sexo", mrz["sexo"] in compatible.get(curp[10], set()),
+                "CURP usa H/M; la MRZ puede conservar H/M o usar M/F según el modelo")
         pat = fields["apellido_paterno"]["valor"]
         if pat and mrz.get("apellidos"):
             add("Apellido paterno vs MRZ", _plain(pat).replace(" ", "") in mrz["apellidos"].replace("<", ""),
