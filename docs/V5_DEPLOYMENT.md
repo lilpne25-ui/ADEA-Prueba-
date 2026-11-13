@@ -10,9 +10,11 @@ Vercel ejecuta `index.py` como FastAPI con RapidOCR/ONNX. `VERCEL=1` bloquea car
 4. Una carga no incluida devuelve 403.
 5. Manifiesto y service worker responden 200.
 
-La Git Integration no estaba conectada al auditar V4; los despliegues anteriores fueron por CLI. V5 debe crear Preview desde la rama/PR y promoverse solo después de CI y E2E.
+La Git Integration no estaba conectada al auditar V4. El intento de enlazar el proyecto existente con `lilpne25-ui/ADEA-Prueba-` fue rechazado porque la aplicación de Vercel no tiene permiso de escritura/admin sobre el repositorio. No se creó otro proyecto: Preview y Producción se desplegaron por CLI después de CI y E2E. Un administrador debe conceder acceso al repositorio en la aplicación GitHub de Vercel y ejecutar `vercel git connect` para automatizar despliegues futuros.
 
 Preview V5 validado: `https://adea-ine-control-mw5dchvyh-vlux-s-projects.vercel.app` (`dpl_5fZfYzXPcefyj8cS19e82hDZ5w1P`). Se comprobaron salud OCR, streaming, los cuatro estados esperados y el rechazo 403 de cargas reales.
+
+Producción V5: `https://adea-ine-control.vercel.app` (`dpl_6ZiFGyNfNiDcs2Kb8GicSF3eafUN`). El dominio quedó asociado después de fusionar la PR #2; la comprobación posterior reprodujo 38 eventos NDJSON, 32 etapas, los cuatro estados esperados y cero errores de consola a 390 px.
 
 ## Privado
 

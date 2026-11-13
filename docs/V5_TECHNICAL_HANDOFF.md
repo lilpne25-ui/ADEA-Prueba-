@@ -25,8 +25,10 @@ node --check public\app.js
 
 - Código y pruebas locales: listo.
 - Oracle/SQL Server: verificados.
-- Preview Vercel y E2E: aprobados.
-- CI/PR/Production: pendientes de integración controlada.
+- Preview Vercel, E2E y CI: aprobados.
+- PR #2: fusionada en `main` (`7df02ca`).
+- Producción: aprobada en `https://adea-ine-control.vercel.app`.
+- Git Integration de Vercel: pendiente de que un administrador conceda acceso de la aplicación al repositorio; el despliegue actual por CLI está operativo.
 - Cámara/PWA física: pendiente del usuario; no debe marcarse aprobada por emulación.
 - Precisión real: pendiente de dataset autorizado local.
 
