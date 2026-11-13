@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f6fa" />
+  <meta name="description" content="Prueba técnica independiente: clasificación, visión, extracción y auditoría de credenciales INE con Python." />
+  <title>INE Control · Prueba técnica Python</title>
+  <link rel="icon" type="image/png" href="/static/icons/favicon-32.png" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/fixes.css" />
+  <link rel="stylesheet" href="/static/extra.css" />
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="wordmark" aria-label="INE Control">INE<b>Control</b></span>
+        <span class="brand-divider"></span>
+        <span class="brand-label">Mesa de control documental <small>Prueba técnica independiente · Python</small></span>
+      </div>
+      <div class="header-right"><span class="live-dot" id="live-dot"></span><span id="server-status">Conectando al motor Python</span><span class="build">V2.0</span></div>
+    </header>
+
+    <div class="notice-bar" role="note">Proyecto independiente desarrollado como prueba técnica. No constituye software oficial de ADEA.</div>
+
+    <main>
+      <nav class="tabs" aria-label="Secciones" role="tablist">
+        <button class="tab active" role="tab" data-tab="lab">Laboratorio</button>
+        <button class="tab" role="tab" data-tab="results">Resultados <span class="tab-count" id="tab-count" hidden>0</span></button>
+        <button class="tab" role="tab" data-tab="guide">Guía</button>
+        <button class="tab" role="tab" data-tab="tech">Arquitectura</button>
+        <button class="tab" role="tab" data-tab="infra">Infraestructura</button>
+      </nav>
+
+      <!-- ============ LABORATORIO ============ -->
+      <section class="tab-content active" id="tab-lab">
+        <div class="lab-intro">
+          <div>
+            <span class="kicker">MESA DE CONTROL DE ONBOARDING</span>
+            <h1>Separa credenciales INE, límpialas y extrae sus datos.</h1>
+            <p>Carga imágenes, ejecuta el proceso y revisa clasificación, imagen mejorada y campos con su nivel de validación. En 3 pasos: <b>1</b> elige imágenes · <b>2</b> procesa · <b>3</b> revisa.</p>
+          </div>
+          <div class="session-tag" id="mode-badge">MODO DEMOSTRACIÓN</div>
+        </div>
+
+        <div class="workspace-grid">
+          <div class="upload-card panel">
+            <div class="panel-title"><div><span class="small-index">01</span><strong>Banco de imágenes</strong></div><span class="panel-note">PNG · JPG · WEBP</span></div>
+            <div class="upload-zone" id="dropzone" role="button" tabindex="0" aria-label="Seleccionar imágenes">
+              <div class="upload-icon">⇧</div><h3>Agrega tus documentos</h3><p>Arrastra imágenes o selecciónalas desde tu equipo o teléfono.</p><span class="upload-label" id="upload-label">Seleccionar archivos <span>↗</span></span><small>Hasta 8 archivos por lote · se optimizan en tu navegador</small>
+            </div>
+            <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff" multiple hidden />
+            <input type="file" id="camera-input" accept="image/*" capture="environment" hidden />
+            <div class="upload-actions">
+              <button class="btn btn-subtle" id="camera-btn" type="button">Tomar fotografía <span>◉</span></button>
+              <button class="btn btn-subtle" id="sample-set" type="button">Lote de muestra ficticio <span>→</span></button>
+            </div>
+            <div id="queue" class="queue" aria-live="polite"></div>
+            <div class="action-stack"><button class="btn btn-primary btn-full" id="run-batch" disabled>Ejecutar procesamiento <span>→</span></button></div>
+            <div class="privacy-note"><span>◈</span><span id="privacy-message">En modo demo no se conservan imágenes ni datos. Usa documentos ficticios para demostraciones públicas.</span></div>
+          </div>
+
+          <div class="panel stage-panel">
+            <div class="panel-title"><div><span class="small-index">02</span><strong>Estado del proceso</strong></div><span class="panel-note" id="session-stats">EN ESPERA</span></div>
+            <ol class="stages" id="stages">
+              <li data-stage="load"><b>1</b><div><strong>Carga</strong><small>Archivos listos en el navegador</small></div></li>
+              <li data-stage="process"><b>2</b><div><strong>Procesamiento</strong><small>Visión, OCR, extracción y validación en Python</small></div></li>
+              <li data-stage="result"><b>3</b><div><strong>Resultado</strong><small>Éxito, revisión, descarte o error</small></div></li>
+              <li data-stage="trace"><b>4</b><div><strong>Trazabilidad</strong><small>Estado de Oracle y SQL Server</small></div></li>
+            </ol>
+            <div class="stage-message" id="stage-message" role="status">Selecciona imágenes o carga el lote de muestra para comenzar.</div>
+            <div class="legend">
+              <span class="status-badge listo">LISTO</span> validado por formato y consistente ·
+              <span class="status-badge revision">REVISIÓN</span> requiere persona ·
+              <span class="status-badge descartado">DESCARTADO</span> no es INE ·
+              <span class="status-badge error">ERROR</span> no se pudo procesar
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ RESULTADOS ============ -->
+      <section class="tab-content" id="tab-results">
+        <div class="section-header"><div><span class="kicker">REVISIÓN Y TRAZABILIDAD</span><h2>Resultados</h2><p>Todo valor muestra su estado de validación. Un formato correcto no prueba autenticidad.</p></div></div>
+        <div class="panel results-card">
+          <div class="placeholder" id="results-empty"><div class="placeholder-glyph"><span>▤</span><i></i><i></i></div><h3>Aún no hay resultados</h3><p>Ve al Laboratorio y ejecuta un lote.</p></div>
+          <div id="results-view" hidden>
+            <div class="metrics-row"><div><b id="total-count">0</b><small>ARCHIVOS</small></div><div><b id="ine-count">0</b><small>INE / IFE</small></div><div><b id="review-count">0</b><small>REVISIÓN</small></div><div><b id="discard-count">0</b><small>DESCARTADOS</small></div></div>
+            <div class="result-list" id="result-list" role="tablist"></div>
+            <div class="detail" id="result-detail"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ GUÍA ============ -->
+      <section class="tab-content" id="tab-guide">
+        <div class="section-header"><div><span class="kicker">PARA CUALQUIER PERSONA</span><h2>¿Cómo funciona?</h2><p>Sin conocimientos técnicos. Toca cada punto para leer la explicación.</p></div><button class="btn btn-primary" id="guide-demo">Probar con la muestra ficticia <span>→</span></button></div>
+        <div class="faq">
+          <details open><summary><b>1</b> ¿Qué es esta aplicación?</summary><p>Una mesa de control automática: recibe fotografías de documentos, encuentra cuáles son credenciales INE/IFE, mejora la imagen y lee sus datos para preparar el registro del expediente.</p></details>
+          <details><summary><b>2</b> ¿Qué problema resuelve?</summary><p>Los clientes envían carpetas mezcladas (INE, licencias, contratos, escrituras, fotos borrosas). Revisarlas a mano es lento. La aplicación separa lo que sí es INE y deja a una persona solo lo dudoso.</p></details>
+          <details><summary><b>3</b> ¿Qué documentos acepta?</summary><p>Imágenes PNG, JPG, WEBP, BMP o TIFF de hasta 4 MB y 14 megapíxeles. Puedes subir solo el frente, solo el reverso o ambos lados.</p></details>
+          <details><summary><b>4</b> ¿Cómo cargo imágenes?</summary><p>Arrástralas a la zona punteada, pulsa «Seleccionar archivos» o, en el teléfono, «Tomar fotografía». Si subes frente y reverso, indica en cada fila a qué <em>expediente</em> y <em>cara</em> pertenecen.</p></details>
+          <details><summary><b>5</b> ¿Cómo ejecuto el proceso?</summary><p>Pulsa «Ejecutar procesamiento». Verás el avance por etapas y, al terminar, se abre la pestaña Resultados.</p></details>
+          <details><summary><b>6</b> ¿Qué significa cada resultado?</summary><p><b>Listo:</b> parece INE y sus identificadores cumplen formato y son consistentes entre sí. <b>Revisión:</b> hay dudas, una persona debe mirar. <b>Descartado:</b> no se encontró evidencia de INE. <b>Error:</b> el archivo no se pudo leer.</p></details>
+          <details><summary><b>7</b> ¿Qué hago si hay un error?</summary><p>Verifica que sea una imagen válida, nítida y menor a 4 MB. Vuelve a tomar la foto con buena luz y sin reflejos. Si persiste, revisa que Tesseract esté instalado (Arquitectura → Estado del sistema).</p></details>
+          <details><summary><b>8</b> ¿Cómo interpreto los campos?</summary><p><b>Validado por formato:</b> cumple la estructura (no prueba autenticidad). <b>Pendiente de confirmación:</b> hipótesis; compárala con el documento. <b>Inválido:</b> se leyó algo que no cumple el formato. <b>No detectado:</b> no hay evidencia; no se inventa nada.</p></details>
+          <details><summary><b>9</b> ¿Cómo funciona la auditoría?</summary><p>En modo corporativo, cada archivo (aceptado, enviado a revisión, descartado o con error) deja un registro en SQL Server con su huella (hash), resultado y duración, sin imágenes ni datos personales. Oracle recibe solo expedientes «Listo».</p></details>
+          <details><summary><b>10</b> ¿Qué es el modo demostración?</summary><p>Procesa todo en memoria, no escribe en ninguna base de datos y en la versión pública solo acepta las muestras ficticias. Nunca subas una INE real a una demo pública.</p></details>
+        </div>
+        <div class="callout"><span class="callout-icon">ⓘ</span><div><strong>Desde un teléfono en tu red local</strong><p>Ejecuta <code>INICIAR_WINDOWS.bat</code>, conecta el teléfono a la misma Wi‑Fi y abre <code>http://IP-DE-TU-PC:8000</code>. Usa solo una red confiable y no abras el puerto a Internet.</p></div></div>
+      </section>
+
+      <!-- ============ ARQUITECTURA ============ -->
+      <section class="tab-content" id="tab-tech">
+        <div class="section-header"><div><span class="kicker">TRAZABILIDAD CON EL EXAMEN</span><h2>Arquitectura y alcance</h2><p>Qué hace cada módulo y qué está realmente verificado.</p></div></div>
+        <div class="tech-grid">
+          <div class="tech-panel"><h3>Flujo de procesamiento</h3>
+            <div class="flow-step"><b>01</b><div><strong>Clasificación híbrida</strong><p>Señales textuales (emisor, leyenda, etiquetas, MRZ) y visuales (contorno ID-1, bloque de foto). Una CURP por sí sola nunca basta. No es un modelo entrenado.</p></div></div>
+            <div class="flow-step"><b>02</b><div><strong>Visión (OpenCV)</strong><p>Bordes → contornos → localización → perspectiva → variantes (contraste, denoise, binarización adaptativa). Se elige por calidad de lectura medida.</p></div></div>
+            <div class="flow-step"><b>03</b><div><strong>OCR y extracción</strong><p>Tesseract local, regex del examen, nombre/domicilio por regiones, MRZ de 3 líneas, QR y PDF417 con ZXing. Las correcciones OCR se registran aparte.</p></div></div>
+            <div class="flow-step"><b>04</b><div><strong>Validación</strong><p>Formato, fecha, entidad, dígito verificador y consistencia entre frente y reverso. Estados: detectado, validado por formato, pendiente, no detectado, inválido.</p></div></div>
+            <div class="flow-step"><b>05</b><div><strong>Persistencia y auditoría</strong><p><code>SP_REGISTRAR_EXPEDIENTE</code> en Oracle (python-oracledb) y bitácora SQL Server (pyodbc) detrás de adaptadores; sin credenciales no se simula ninguna escritura.</p></div></div>
+          </div>
+          <div class="tech-panel tech-status"><h3>Estado del sistema</h3>
+            <div class="service-row"><span>API backend</span><b id="health-api">Verificando</b></div>
+            <div class="service-row"><span>Tesseract OCR</span><b id="health-ocr">Verificando</b></div>
+            <div class="service-row"><span>OpenCV / perspectiva</span><b id="health-cv">Verificando</b></div>
+            <div class="service-row"><span>ZXing / QR · PDF417</span><b id="health-zxing">Verificando</b></div>
+            <div class="service-row"><span>ORACLE</span><b id="health-oracle">Verificando</b></div>
+            <div class="service-row"><span>SQL SERVER</span><b id="health-sql">Verificando</b></div>
+            <button class="btn btn-subtle" id="test-db" hidden>Probar conexiones reales</button>
+            <p class="status-description" id="db-message">«Conectado y validado» solo aparece tras una prueba real de conexión.</p>
+            <a class="doc-link" href="/api/docs" target="_blank" rel="noopener">Explorar la API (Swagger) ↗</a>
+          </div>
+        </div>
+        <div class="tech-panel limits"><h3>Límites conocidos</h3><ul>
+          <li>Precisión no medida con INE reales; las pruebas usan imágenes sintéticas degradadas.</li>
+          <li>Las regiones de extracción son genéricas: falta calibrarlas con cada modelo de credencial y documentos autorizados.</li>
+          <li>La lectura OCR del MRZ puede fallar en fotos reales; se informa qué dígitos verificadores coinciden.</li>
+          <li>Oracle y SQL Server: lógica probada con adaptadores simulados; la integración real requiere credenciales y la firma definitiva del procedimiento.</li>
+        </ul></div>
+      </section>
+      <!-- ============ INFRAESTRUCTURA ============ -->
+      <section class="tab-content" id="tab-infra">
+        <div class="section-header"><div><span class="kicker">Administración</span><h2>Infraestructura</h2><p>Estado verificado en este momento contra las bases locales. No se muestran contraseñas ni datos personales.</p></div><button class="btn btn-subtle" id="infra-refresh">Verificar ahora</button></div>
+        <div class="infra-grid">
+          <article class="infra-card" id="infra-oracle"><header><span class="dot"></span><h3>Oracle</h3><b class="infra-state">Sin verificar</b></header><dl></dl></article>
+          <article class="infra-card" id="infra-sql"><header><span class="dot"></span><h3>SQL Server</h3><b class="infra-state">Sin verificar</b></header><dl></dl></article>
+        </div>
+        <div class="tech-panel infra-errors"><h3>Errores recientes</h3><ul id="infra-errors"><li class="muted">Sin datos todavía.</li></ul></div>
+      </section>
+    </main>
+
+    <dialog class="camera-sheet" id="camera-sheet" aria-label="Cámara con encuadre">
+      <div class="camera-stage">
+        <video id="camera-video" playsinline muted autoplay></video>
+        <div class="camera-guide" id="camera-guide"><span>Alinea la credencial dentro del marco</span></div>
+      </div>
+      <div class="camera-bar">
+        <span class="camera-quality" id="camera-quality" role="status">Iniciando cámara…</span>
+        <label class="camera-auto"><input type="checkbox" id="camera-auto" checked /> Procesar al capturar</label>
+        <div class="camera-actions"><button class="btn btn-subtle" id="camera-close" type="button">Cerrar</button><button class="btn btn-primary" id="camera-shot" type="button">Capturar</button></div>
+      </div>
+    </dialog>
+    <footer><span>INE CONTROL / PYTHON</span><span>Proyecto independiente desarrollado como prueba técnica. No constituye software oficial de ADEA.</span><span>2026</span></footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,30 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+*.db
+data/
+output/
+# Documentos reales: NUNCA al repositorio
+fotos_reales/
+*.jpg
+*.jpeg
+*.heic
+resumen_*.json
+dist/
+.vercel/
+.env.local
+# Secretos y artefactos locales
+*.pem
+*.key
+*.crt
+*.pfx
+certs/
+*.bak
+*.dmp
+*.dbf
+*.zip
+# Marca de terceros: no se publica en el repositorio público
+public/adea-logo-000.png
