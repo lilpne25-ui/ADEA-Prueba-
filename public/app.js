@@ -391,6 +391,7 @@ async function boot() {
       if (!token) { token = window.prompt("Token de acceso (está en .env.local como APP_ACCESS_TOKEN; INICIAR_WINDOWS.bat lo pasa solo):") || ""; try { window.sessionStorage.setItem("adea-token", token); } catch { /* ignorar */ } }
       loadInfra();  // verificación real de conexiones al abrir la app
     }
+    el("pair-btn").hidden = health.entorno !== "local";
     if (!health.carga_real_habilitada) {
       el("privacy-message").textContent = "Demo pública: solo se aceptan documentos ficticios. Para probar una INE real, ejecuta la aplicación localmente en una red segura.";
       zone.setAttribute("aria-disabled", "true");
@@ -418,3 +419,23 @@ async function testDb() {
   } catch (err) { el("db-message").textContent = `No se pudo probar: ${err.message}`; }
 }
 boot();
+
+// ---------- PWA ----------
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register("/sw.js").catch(() => { /* la app funciona igual sin modo offline */ });
+}
+
+// ---------- emparejamiento del celular (solo instalación local) ----------
+async function openPairing() {
+  try {
+    const data = await api("/api/pairing");
+    el("pair-qr").src = data.qr || "";
+    el("pair-url").textContent = data.url_visible;
+    el("pair-note").textContent = data.https
+      ? "El celular mostrará un aviso de certificado propio de tu red: acéptalo solo en tu Wi-Fi."
+      : (data.aviso || "");
+    el("pair-sheet").showModal();
+  } catch (err) { stageMessage(`No se pudo generar el emparejamiento: ${err.message}`, "err"); }
+}
+el("pair-btn").addEventListener("click", openPairing);
+el("pair-close").addEventListener("click", () => el("pair-sheet").close());

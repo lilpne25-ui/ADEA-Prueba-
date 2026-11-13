@@ -79,7 +79,10 @@ class Processor:
         band = image.crop((0, int(image.height * .60), image.width, image.height))
         band = imaging.upscale_if_small(band, 1500)
         best: tuple[int, list[str], list[str]] = (-1, [], [])
-        for prep in (lambda b: b.convert("L"), imaging.adaptive_binarize):
+        preps = [lambda b: b.convert("L"), imaging.adaptive_binarize]
+        if ocr_engine.engine() == "rapidocr":
+            preps = preps[:1]
+        for prep in preps:
             try:
                 text = self._read(prep(band), psm=6, whitelist=MRZ_WHITELIST, lang="eng").text
             except RuntimeError:
@@ -104,7 +107,12 @@ class Processor:
 
         # --- Comparación de estrategias de preprocesamiento (se elige por calidad de lectura medida)
         comparison, reads = [], {}
-        for name, variant in imaging.variants(card).items():
+        candidates = imaging.variants(card)
+        if ocr_engine.engine() == "rapidocr":
+            # RapidOCR ya normaliza internamente y es ~5× más lento por pasada en CPU: se comparan
+            # solo dos estrategias para respetar los límites de tiempo de una función serverless.
+            candidates = {k: candidates[k] for k in ("original", "gris_contraste") if k in candidates}
+        for name, variant in candidates.items():
             res = self._read(variant, psm=6)
             reads[name] = (variant, res)
             comparison.append({"estrategia": name, "confianza_media": res.mean_confidence,

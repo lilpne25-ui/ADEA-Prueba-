@@ -64,7 +64,7 @@ rem ---- 4b. Bases locales de desarrollo (solo si existen credenciales en .env.l
 set "URLSUFFIX="
 if exist ".env.local" (
   echo Modo con bases locales detectado: iniciando SQL Server LocalDB y Oracle...
-  ".venv\Scripts\python.exe" -m pip install -q -r requirements-corporate.txt
+  ".venv\Scripts\python.exe" -m pip install -q -r requirements-local.txt
   set "LOCALDB=%ProgramFiles%\Microsoft SQL Server\170\Tools\Binn\SqlLocalDB.exe"
   if exist "!LOCALDB!" ( "!LOCALDB!" start ADEA_INE >nul 2>&1 && echo [OK] SQL Server LocalDB ADEA_INE iniciado ) else ( echo [AVISO] No se encontro SqlLocalDB.exe )
   docker start adea-oracle-free >nul 2>&1 && echo [OK] Contenedor Oracle iniciado ^(puede tardar 1-2 min en aceptar conexiones^) || echo [AVISO] Docker Desktop no esta abierto: Oracle aparecera Desconectado.
@@ -73,15 +73,18 @@ if exist ".env.local" (
 
 rem ---- 5. Iniciar -------------------------------------------------------------
 echo.
+if not exist "certs\local.crt" (
+  ".venv\Scripts\python.exe" -c "import cryptography" >nul 2>&1 && ".venv\Scripts\python.exe" scripts\make_local_cert.py
+)
 echo Servidor local:   http://localhost:%PORT%
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /C:"IPv4"') do (
-  set "IP=%%a"
-  set "IP=!IP: =!"
-  echo Desde el celular: http://!IP!:%PORT%   (misma red Wi-Fi confiable)
+if exist "certs\local.crt" (
+  echo Celular: abre la app en esta PC y pulsa "Usar mi celular" para escanear el QR ^(HTTPS en el puerto 8443^).
+) else (
+  echo Celular: http://IP-DE-ESTA-PC:%PORT% ^(misma Wi-Fi confiable^)
 )
 echo Para detener: cierra esta ventana o pulsa Ctrl+C.
-echo NUNCA expongas este puerto a Internet con documentos reales.
+echo NUNCA expongas estos puertos a Internet con documentos reales.
 echo.
 start "" "http://localhost:%PORT%%URLSUFFIX%"
-".venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port %PORT%
+".venv\Scripts\python.exe" scripts\serve_local.py
 pause

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import statistics
+import sys
 import subprocess
 from dataclasses import dataclass
 
@@ -21,6 +22,9 @@ class OcrResult:
 
 
 _rapid = None
+_VENDOR = config.ROOT / "vendor"
+if _VENDOR.is_dir() and str(_VENDOR) not in sys.path:
+    sys.path.append(str(_VENDOR))  # rapidocr_onnxruntime vendorizado (ver vendor/NOTICE.md)
 
 
 def engine() -> str | None:

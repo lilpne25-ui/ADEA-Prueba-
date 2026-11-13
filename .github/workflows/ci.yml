@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Tesseract OCR
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
+      - name: Dependencias
+        run: pip install -r requirements-dev.txt
+      - name: Pruebas (unitarias, API, OCR real con Tesseract, seguridad; integración con BD real se omite)
+        run: python -m pytest -q -W ignore --junitxml=pytest-report.xml
+      - name: Motor de la nube (RapidOCR) sobre las muestras sintéticas
+        env:
+          OCR_ENGINE: rapidocr
+        run: |
+          python - <<'PY'
+          from app import ocr
+          from app.pipeline import Processor
+          from app.samples import sample_bytes, SAMPLE_NAMES
+          assert ocr.engine() == "rapidocr"
+          got = {n: Processor().process(sample_bytes(n), n)["clasificacion"] for n in SAMPLE_NAMES}
+          print(got)
+          assert got[SAMPLE_NAMES[0]] == "ine" and got[SAMPLE_NAMES[2]] == "no_ine" and got[SAMPLE_NAMES[3]] == "no_ine"
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-report
+          path: pytest-report.xml
