@@ -53,12 +53,14 @@ Proyecto `adea-ine-control` (equipo vlux-s-projects), dominio de producción `ht
 - `pytest -q`: 81 exitosas, 6 omitidas (las de BD real) — local, Windows, Tesseract 5.4.
 - `ADEA_REAL_DB=1 pytest tests/test_integration_real.py`: 6/6 contra Oracle y SQL Server locales.
 - CI: `.github/workflows/ci.yml` (Ubuntu, Tesseract + verificación del motor RapidOCR) con reporte JUnit como artefacto.
-- Vercel: `GET /api/health` 200; `POST /api/process` con frente ficticio ⇒ `ine/listo`, contrato con CURP ⇒ `no_ine/descartado` (≈17 s para 2 imágenes); carga real ⇒ 403; `/api/pairing` ⇒ 404; manifiesto 200; service worker registrado; sin errores de consola; sin desplazamiento horizontal a 390 px.
+- Producción tras el merge (commit 9f8939b, deployment adea-ine-control-m9pg70s6r): lote de 4 muestras ⇒ frente `ine/listo` (9.4 s), contrato y foto `descartado`; el reverso queda `descartado` porque su MRZ sintético no se lee en Linux (ver §9).
+- Vercel (primer despliegue): `GET /api/health` 200; `POST /api/process` con frente ficticio ⇒ `ine/listo`, contrato con CURP ⇒ `no_ine/descartado` (≈17 s para 2 imágenes); carga real ⇒ 403; `/api/pairing` ⇒ 404; manifiesto 200; service worker registrado; sin errores de consola; sin desplazamiento horizontal a 390 px.
 
 ## 9. Problemas conocidos
 - Precisión real no medida; las regiones dependen de etiquetas legibles y del modelo de credencial.
-- El MRZ sintético se lee con errores; los dígitos verificadores lo delatan y el reverso queda en revisión.
+- El MRZ sintético depende de la fuente del sistema: en Windows se reconoce (revisión); en Linux/CI/Vercel no se reconoce y el reverso ficticio queda descartado. La prueba correspondiente es XFAIL documentado fuera de Windows.
 - RapidOCR omite espacios: se compensa en la extracción, pero puede afectar documentos con otras tipografías.
+- El proyecto Vercel no está conectado a GitHub por Git Integration (la sesión no tuvo permiso para ese cambio de configuración); los despliegues se hicieron por CLI desde `main`. Para despliegues automáticos: Vercel → adea-ine-control → Settings → Git → conectar `lilpne25-ui/ADEA-Prueba-`.
 - El primer despliegue por CLI de un proyecto nuevo quedó directamente en producción (comportamiento de Vercel para proyectos sin producción previa); se verificó antes de anunciarlo.
 
 ## 10. Decisiones técnicas

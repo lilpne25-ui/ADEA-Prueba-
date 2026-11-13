@@ -6,7 +6,7 @@ Demo pública (solo documentos ficticios): **https://adea-ine-control.vercel.app
 
 | Escritorio | Móvil |
 |---|---|
-| ![Laboratorio en escritorio](docs/screenshots/escritorio-1440.png) | ![Laboratorio en móvil](docs/screenshots/movil-390.png) |
+| ![Laboratorio en escritorio](docs/screenshots/escritorio-1440.png) | ![Laboratorio en móvil](docs/screenshots/movil-500.png) |
 
 ## 1. Presentación
 INE Control recibe un lote heterogéneo de imágenes, separa las credenciales INE/IFE, mejora la imagen, extrae sus campos, los valida y registra el expediente en **Oracle** (`SP_REGISTRAR_EXPEDIENTE`) con auditoría en **SQL Server**. Todo el procesamiento está en Python; la interfaz web solo presenta resultados.
@@ -79,6 +79,7 @@ Bases locales opcionales: [DEPLOYMENT_GUIDE.md §1b](DEPLOYMENT_GUIDE.md).
 ## 16. Limitaciones reales
 - Precisión con INE reales **no medida** (solo muestras sintéticas); en una prueba local con una credencial real se leyeron CURP y clave, pero no nombre, sección ni MRZ.
 - RapidOCR en la nube tarda ~5–10 s por imagen.
+- En Linux (CI y Vercel) el MRZ de la muestra sintética no se reconoce porque se dibuja con la fuente monoespaciada del sistema (Tesseract/RapidOCR confunden `<`); por eso en la demo pública el reverso ficticio queda descartado. En Windows sí se reconoce.
 - Cámara en vivo no probada en un teléfono físico.
 - Firma real de `SP_REGISTRAR_EXPEDIENTE` desconocida (contrato de demostración configurable).
 
