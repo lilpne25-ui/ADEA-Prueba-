@@ -74,20 +74,36 @@ def locate_card(image: Image.Image) -> Localization:
     for low, high in ((40, 120), (60, 160), (20, 80)):
         edges = cv2.Canny(blur, low, high)
         edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8), iterations=2)
         contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:8]:
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:16]:
             area = cv2.contourArea(contour)
-            if area < area_total * 0.2:
+            if area < area_total * 0.05:
                 continue
             hull = cv2.convexHull(contour)
             peri = cv2.arcLength(hull, True)
-            quad = cv2.approxPolyDP(hull, 0.03 * peri, True)
+            quad = None
+            for epsilon in (0.02, 0.03, 0.04, 0.05, 0.06):
+                attempt = cv2.approxPolyDP(hull, epsilon * peri, True)
+                if len(attempt) == 4:
+                    quad = attempt
+                    break
+            if quad is None:
+                rect = cv2.minAreaRect(hull)
+                rw, rh = rect[1]
+                fill = area / max(rw * rh, 1.0)
+                ratio = max(rw, rh) / max(min(rw, rh), 1.0)
+                if fill >= 0.35 and 1.35 <= ratio <= 1.9:
+                    quad = cv2.boxPoints(rect).reshape(4, 1, 2)
+                else:
+                    continue
             if len(quad) != 4:
                 continue
             tl, tr, br, bl = _order_corners(quad)
             width = max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl))
             height = max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl))
-            if height < 1 or not 1.35 <= width / height <= 1.85:  # proporción ID-1 ≈ 1.586
+            ratio = max(width, height) / max(min(width, height), 1.0)
+            if height < 1 or not 1.35 <= ratio <= 1.9:  # proporción ID-1 ≈ 1.586
                 continue
             candidates.append((area, (tl, tr, br, bl)))
         if candidates:
@@ -105,6 +121,9 @@ def locate_card(image: Image.Image) -> Localization:
     target = np.float32([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]])
     matrix = cv2.getPerspectiveTransform(quad, target)
     warped = cv2.warpPerspective(rgb, matrix, (width, height), flags=cv2.INTER_CUBIC)
+    if height > width:
+        warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
+        width, height = height, width
     skew = abs(float(quad[1][1] - quad[0][1])) + abs(float(quad[2][0] - quad[1][0]))
     return Localization(Image.fromarray(warped), True, True, True,
                         [f"Tarjeta localizada; perspectiva corregida ({width}×{height}px)."],
