@@ -14,14 +14,14 @@
 | `extraction.py` | Extracción explicable por etiquetas/líneas, corrección contextual de caracteres (registrada), MRZ, perfiles de región configurables (`REGION_PROFILES`) |
 | `validation.py` | Estados de campo, CURP (regex+fecha+entidad+dígito verificador), clave de elector, MRZ TD1 (ICAO 9303), validación cruzada |
 | `classification.py` | Clasificador híbrido por reglas con señales fuertes/estructurales/negativas |
-| `pipeline.py` | Orquestación (`Processor`, OCR inyectable) y muestra sintética |
+| `pipeline.py` | Orquestación (`Processor`), eventos reales, confianza/cajas y muestra sintética |
 | `pairing.py` | Asociación frente/reverso explícita o por nombre, siempre tentativa hasta confirmar |
 | `persistence.py` | Oracle + SQL Server + bandeja de auditoría; estados honestos |
 | `samples.py` | Muestras 100 % sintéticas (frente, reverso con MRZ/QR/PDF417, contrato con CURP, foto ruidosa) |
 | `main.py` | API, cabeceras de seguridad, autenticación por token |
 | `batch.py` | CLI por carpeta (sin PII por defecto) |
 
-La UI (`public/`) no contiene lógica empresarial: solo presenta lo que devuelve la API y escapa todo valor dinámico (`esc()`).
+La UI (`public/`) no contiene lógica empresarial: presenta JSON/NDJSON del backend y escapa valores dinámicos (`esc()`).
 
 ## C. Procesamiento
 1. **Carga**: PNG/JPG/WEBP/BMP/TIFF, ≤4 MB, ≤14 MP, EXIF aplicado.
@@ -54,7 +54,7 @@ La UI (`public/`) no contiene lógica empresarial: solo presenta lo que devuelve
 | `POST /api/persistence/test` | Prueba real de conexión (requiere `X-Access-Token`) |
 | `GET /api/docs` | Swagger |
 
-Errores: `400` JSON inválido · `401` token · `403` carga real deshabilitada / muestra no permitida · `413` >4.3 MB · `422` lote vacío o >8 · `503` Tesseract ausente o modo corporativo sin token. Errores por archivo (corrupto, no imagen, >14 MP) devuelven `200` con `estado:"error"` en ese elemento.
+Endpoints principales: `POST /api/process` (compatibilidad JSON) y `POST /api/process-stream` (NDJSON incremental). Errores: `400` JSON inválido · `401` token corporativo · `403` carga real deshabilitada · `413` >4.3 MB · `422` lote vacío o >8 · `503` sin motor OCR.
 
 Ejemplo:
 ```bash

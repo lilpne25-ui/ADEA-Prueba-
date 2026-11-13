@@ -4,17 +4,20 @@
 Una mesa de control que lee fotografías de documentos, encuentra las credenciales INE/IFE, mejora la imagen y extrae sus datos. Es una prueba técnica independiente (no oficial de ADEA).
 
 ## Pasos
-1. **Abrir** `INICIAR_WINDOWS.bat` (o `http://IP-DE-LA-PC:8000` desde el teléfono).
+1. **Abrir** `INICIAR_WINDOWS.bat`. En teléfono usa «Usar mi celular» y una URL HTTPS confiable; HTTP no habilita la cámara integrada.
 2. **Laboratorio → elegir imágenes**: arrastra, «Seleccionar archivos» o «Tomar fotografía» (móvil). Para probar sin documentos: **Lote de muestra ficticio**.
 3. Si subes frente y reverso, indica en cada fila el **Expediente** y la **Cara**. La aplicación nunca une archivos solo por el orden.
-4. **Ejecutar procesamiento**. Verás: Carga → Procesamiento → Resultado → Trazabilidad.
-5. En **Resultados** revisa cada archivo.
+4. **Ejecutar procesamiento**. Verás la etapa real y el estado independiente de cada archivo.
+5. En **Resultados** revisa campos y alertas. Abre «Ver detalles técnicos» para ROI, estrategias OCR y persistencia.
+
+En móvil, «Escanear INE» abre la cámara. Alinea, captura, revisa la vista previa y elige **Repetir** o **Usar y procesar**.
 
 ## Qué significa cada resultado
 | Resultado | Significado |
 |---|---|
 | LISTO | Parece INE y CURP y clave cumplen formato y no se contradicen entre sí ni con el reverso. **No prueba autenticidad.** |
 | REVISIÓN | Evidencia parcial, campos pendientes o inconsistencias: una persona debe revisar. |
+| REPETIR CAPTURA | La luz, enfoque, resolución o contenido no permiten clasificar con fiabilidad. |
 | DESCARTADO | Sin evidencia suficiente de INE/IFE (contratos, fotos, licencias, etc.). |
 | ERROR | Archivo corrupto, no imagen, demasiado grande (>4 MB o >14 MP). |
 

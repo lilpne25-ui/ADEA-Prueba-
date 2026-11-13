@@ -39,7 +39,18 @@ def main() -> None:
     admin = pyodbc.connect(f"Driver={{{DRIVER}}};Server={INSTANCE};Trusted_Connection=yes;"
                            "Encrypt=yes;TrustServerCertificate=yes", autocommit=True, timeout=15)
     cur = admin.cursor()
-    cur.execute(f"IF DB_ID('{DB}') IS NULL CREATE DATABASE [{DB}]")
+    if not cur.execute("SELECT DB_ID(?)", DB).fetchone()[0]:
+        # Si la instancia LocalDB fue eliminada pero sus archivos quedaron intactos,
+        # se adjuntan para recuperar los datos en vez de sobrescribirlos.
+        mdf = Path.home() / f"{DB}.mdf"
+        ldf = Path.home() / f"{DB}_log.ldf"
+        if mdf.exists() and ldf.exists():
+            mdf_sql = str(mdf).replace("'", "''")
+            ldf_sql = str(ldf).replace("'", "''")
+            cur.execute(f"CREATE DATABASE [{DB}] ON (FILENAME=N'{mdf_sql}'), "
+                        f"(FILENAME=N'{ldf_sql}') FOR ATTACH")
+        else:
+            cur.execute(f"CREATE DATABASE [{DB}]")
     # CREATE LOGIN no admite parámetros: la contraseña generada (alfabeto seguro) se escapa como literal.
     exists = cur.execute("SELECT 1 FROM sys.server_principals WHERE name = ?", LOGIN).fetchone()
     quoted = password.replace("'", "''")
@@ -63,7 +74,10 @@ CREATE TABLE dbo.IneAuditLog (
 );""")
     cur.execute("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_IneAuditLog_Sha') "
                 "CREATE INDEX IX_IneAuditLog_Sha ON dbo.IneAuditLog (FileSha256)")
-    cur.execute(f"IF DATABASE_PRINCIPAL_ID('{LOGIN}') IS NULL CREATE USER [{LOGIN}] FOR LOGIN [{LOGIN}]")
+    if cur.execute("SELECT DATABASE_PRINCIPAL_ID(?)", LOGIN).fetchone()[0]:
+        cur.execute(f"ALTER USER [{LOGIN}] WITH LOGIN = [{LOGIN}]")
+    else:
+        cur.execute(f"CREATE USER [{LOGIN}] FOR LOGIN [{LOGIN}]")
     cur.execute(f"GRANT INSERT, SELECT ON dbo.IneAuditLog TO [{LOGIN}]")
     admin.close()
 

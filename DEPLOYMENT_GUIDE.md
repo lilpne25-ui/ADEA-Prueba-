@@ -1,7 +1,7 @@
 # Guía de despliegue
 
 ## 1. Local en Windows (verificado en la máquina de desarrollo)
-`INICIAR_WINDOWS.bat` (ver README). Acceso desde el teléfono: misma Wi‑Fi, `http://IP-PC:8000`. El tráfico LAN es HTTP sin cifrar: úsalo solo en red confiable y permite el firewall únicamente en red **privada**. Para detener: cerrar la ventana.
+`INICIAR_WINDOWS.bat` (ver README). Para cámara móvil usa una URL HTTPS confiable, preferentemente Tailscale Serve o un reverse proxy corporativo. HTTP en LAN puede servir la interfaz, pero `getUserMedia` no funcionará y no debe usarse para identificaciones reales.
 
 ## 1b. Bases locales de desarrollo (V3.0, instaladas y verificadas en la PC de desarrollo)
 | Base | Implementación | Acceso |
@@ -31,8 +31,8 @@ docker run --rm -p 8000:8000 ine-control
 ```
 La imagen instala Tesseract (`spa`), OpenCV y ZXing; arranca en `APP_MODE=demo`.
 
-## 4. Vercel (demo pública) — ESTADO: PENDIENTE
-Modalidad pública: **solo muestras ficticias** (`VERCEL=1` ⇒ `ENABLE_REAL_UPLOADS=false`, sin bases de datos, sin credenciales, sin retención). Las pruebas `test_cloud_blocks_real_uploads` verifican el bloqueo.
+## 4. Vercel (demo pública)
+Modalidad pública: **solo muestras ficticias** (`VERCEL=1` ⇒ sin cargas reales, bases, credenciales ni retención). V5 usa RapidOCR vendorizado y NDJSON para progreso real. La promoción debe pasar primero por Preview y las comprobaciones de [docs/V5_DEPLOYMENT.md](docs/V5_DEPLOYMENT.md).
 
 Hallazgos de la documentación oficial de Vercel consultada: Python se ejecuta como Vercel Function (FastAPI soportado sin Dockerfile, 3.12 por defecto, bundle máx. 500 MB). Ese runtime **no permite instalar el binario de Tesseract** con `apt-get`; por eso el OCR funcional en Vercel requeriría un runtime de contenedor (el `Dockerfile.vercel`/`vercel.json` incluidos son un **intento preparado y NO validado**: no se encontró confirmación documental de su disponibilidad/limites). Alternativas: (a) contenedor en otro proveedor para el motor y Vercel solo para la UI, (b) vendorizar un binario estático de Tesseract dentro del bundle.
 

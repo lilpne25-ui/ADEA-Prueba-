@@ -9,6 +9,9 @@ let health = null;
 let token = "";
 const decisions = {};    // decisión humana local (no se persiste)
 
+window.addEventListener("offline", () => stageMessage("Sin conexión: la interfaz sigue disponible, pero el OCR requiere el servidor Python.", "warn"));
+window.addEventListener("online", () => stageMessage("Conexión restaurada. Ya puedes procesar el lote.", "ok"));
+
 const esc = (x) => String(x == null ? "" : x).replace(/[&<>"']/g, (s) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[s]));
 const escapeHtml = esc;
 
@@ -17,7 +20,7 @@ const STATUS = {
   PENDIENTE_CONFIRMACION: ["Pendiente de confirmación", "st-pend"], NO_DETECTADO: ["No detectado", "st-none"],
   INVALIDO: ["Inválido", "st-bad"],
 };
-const STATE_LABEL = {listo: "LISTO", revision: "REVISIÓN", descartado: "DESCARTADO", error: "ERROR"};
+const STATE_LABEL = {listo: "LISTO", revision: "REVISIÓN", repetir: "REPETIR CAPTURA", descartado: "DESCARTADO", error: "ERROR"};
 const PERSIST_LABEL = {
   NO_CONFIGURADO: "NO CONFIGURADO", CONFIGURADO_SIN_PROBAR: "CONFIGURADO (sin probar)",
   CONECTADO_Y_VALIDADO: "CONECTADO Y VALIDADO", FALLO_DE_CONEXION: "FALLO DE CONEXIÓN",
@@ -34,12 +37,57 @@ const api = async (url, opts = {}) => {
   return resp.json();
 };
 
+const streamApi = async (url, body, onEvent) => {
+  const headers = {"Content-Type": "application/json", ...(token ? {"X-Access-Token": token} : {})};
+  const resp = await fetch(url, {method: "POST", headers, body});
+  if (!resp.ok) {
+    let error = {};
+    try { error = await resp.json(); } catch { /* sin cuerpo JSON */ }
+    throw new Error(error.detail || `HTTP ${resp.status}`);
+  }
+  if (!resp.body) throw new Error("El navegador no permite leer el progreso incremental.");
+  const reader = resp.body.getReader(), decoder = new TextDecoder();
+  let buffer = "", finalResult = null;
+  while (true) {
+    const {value, done} = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      onEvent(event);
+      if (event.tipo === "resultado") finalResult = event;
+    }
+    if (done) break;
+  }
+  if (!finalResult) throw new Error("El servidor cerró el flujo sin entregar resultados.");
+  return finalResult;
+};
+
 function showTab(name) {
   document.querySelectorAll(".tab").forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle("active", on); b.setAttribute("aria-selected", on); });
   document.querySelectorAll(".tab-content").forEach((c) => c.classList.toggle("active", c.id === `tab-${name}`));
   window.scrollTo({top: 0});
 }
-document.querySelectorAll(".tab").forEach((btn) => btn.addEventListener("click", () => showTab(btn.dataset.tab)));
+const mainTabs = [...document.querySelectorAll(".tab")];
+mainTabs.forEach((btn, index) => {
+  const panel = el(`tab-${btn.dataset.tab}`);
+  btn.id = `tab-button-${btn.dataset.tab}`;
+  btn.setAttribute("aria-controls", panel.id);
+  btn.tabIndex = index === 0 ? 0 : -1;
+  panel.setAttribute("role", "tabpanel");
+  panel.setAttribute("aria-labelledby", btn.id);
+  btn.addEventListener("click", () => showTab(btn.dataset.tab));
+  btn.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    let next = event.key === "Home" ? 0 : event.key === "End" ? mainTabs.length - 1
+      : (index + (event.key === "ArrowRight" ? 1 : -1) + mainTabs.length) % mainTabs.length;
+    mainTabs.forEach((tab, i) => { tab.tabIndex = i === next ? 0 : -1; });
+    mainTabs[next].focus(); mainTabs[next].click();
+  });
+});
 
 // ---------- carga ----------
 const zone = el("dropzone");
@@ -61,6 +109,8 @@ el("camera-btn").addEventListener("click", () => {
 // ---------- cámara con encuadre ID-1 y retroalimentación en vivo ----------
 let camStream = null;
 let camTimer = null;
+let pendingCapture = null;
+let pendingCaptureUrl = null;
 const ID1_RATIO = 85.6 / 53.98;
 
 function guideRect(video) {
@@ -98,6 +148,7 @@ async function openCamera() {
     return;
   }
   video.srcObject = camStream;
+  showCameraLive();
   sheet.showModal();
   camTimer = window.setInterval(() => {
     if (!video.videoWidth) return;
@@ -114,8 +165,17 @@ function closeCamera() {
   window.clearInterval(camTimer); camTimer = null;
   if (camStream) camStream.getTracks().forEach((t) => t.stop());
   camStream = null;
+  if (pendingCaptureUrl) URL.revokeObjectURL(pendingCaptureUrl);
+  pendingCapture = null; pendingCaptureUrl = null;
   const sheet = el("camera-sheet");
   if (sheet.open) sheet.close();
+}
+
+function showCameraLive() {
+  const video = el("camera-video"), preview = el("camera-preview");
+  preview.hidden = true; video.hidden = false; el("camera-guide").hidden = false;
+  el("camera-shot").hidden = false; el("camera-repeat").hidden = true; el("camera-confirm").hidden = true;
+  el("camera-quality").textContent = "Alinea la credencial y evita reflejos";
 }
 
 el("camera-close").addEventListener("click", closeCamera);
@@ -132,12 +192,26 @@ el("camera-shot").addEventListener("click", () => {
   c.width = Math.round(sw); c.height = Math.round(sh);
   c.getContext("2d").drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height);
   c.toBlob((blob) => {
-    const file = new File([blob], `captura_${new Date().toISOString().slice(11, 19).replace(/:/g, "")}.jpg`, {type: "image/jpeg"});
-    const auto = el("camera-auto").checked;
-    closeCamera();
-    addFiles([file]);
-    if (auto) run();
+    pendingCapture = new File([blob], `captura_${new Date().toISOString().slice(11, 19).replace(/:/g, "")}.jpg`, {type: "image/jpeg"});
+    if (pendingCaptureUrl) URL.revokeObjectURL(pendingCaptureUrl);
+    pendingCaptureUrl = URL.createObjectURL(blob);
+    const preview = el("camera-preview");
+    preview.src = pendingCaptureUrl; preview.hidden = false;
+    video.hidden = true; el("camera-guide").hidden = true; el("camera-shot").hidden = true;
+    el("camera-repeat").hidden = false; el("camera-confirm").hidden = false;
+    el("camera-quality").textContent = "Revisa la nitidez y confirma o repite la captura";
   }, "image/jpeg", 0.92);
+});
+el("camera-repeat").addEventListener("click", () => {
+  if (pendingCaptureUrl) URL.revokeObjectURL(pendingCaptureUrl);
+  pendingCapture = null; pendingCaptureUrl = null; showCameraLive();
+});
+el("camera-confirm").addEventListener("click", () => {
+  if (!pendingCapture) return;
+  const file = pendingCapture;
+  closeCamera();
+  addFiles([file]);
+  run();
 });
 el("sample-set").addEventListener("click", loadSampleSet);
 el("guide-demo").addEventListener("click", async () => { showTab("lab"); await loadSampleSet(); run(); });
@@ -198,12 +272,43 @@ function setStage(stage, state) {
 function resetStages() { document.querySelectorAll("#stages li").forEach((li) => { li.className = ""; }); }
 function stageMessage(text, kind) { const m = el("stage-message"); m.textContent = text; m.className = `stage-message ${kind || ""}`; }
 
+const STAGE_LABEL = {
+  imagen_recibida: "Imagen recibida", deteccion_documental: "Detección documental",
+  localizacion_roi: "Localización de ROI", correccion_visual: "Corrección visual",
+  extraccion_ocr: "Extracción OCR", extraccion: "Extracción de campos", validacion: "Validación",
+};
+
+function initFileProgress() {
+  el("file-progress").innerHTML = queue.map((x, i) => `<div class="file-step" data-file-step="${i}">
+    <span class="file-step-dot"></span><div><strong>${esc(x.name)}</strong><small>En cola</small></div>
+  </div>`).join("");
+}
+
+function handleProgress(event) {
+  if (event.tipo === "etapa") {
+    const item = document.querySelector(`[data-file-step="${event.indice}"]`);
+    if (item) {
+      item.className = "file-step active";
+      item.querySelector("small").textContent = `${STAGE_LABEL[event.etapa] || event.etapa} · ${event.mensaje}`;
+    }
+    stageMessage(`${event.archivo}: ${event.mensaje}`, "");
+  } else if (event.tipo === "archivo_completado" || event.tipo === "archivo_error") {
+    const item = document.querySelector(`[data-file-step="${event.indice}"]`);
+    if (item) {
+      item.className = `file-step ${event.tipo === "archivo_error" ? "error" : "done"}`;
+      item.querySelector("small").textContent = event.tipo === "archivo_error"
+        ? event.mensaje : `${STATE_LABEL[event.estado] || event.estado} · ${(event.duracion_ms / 1000).toFixed(1)} s`;
+    }
+  }
+}
+
 async function run() {
   if (!queue.length) return;
   const button = el("run-batch");
   button.disabled = true;
   button.textContent = "Procesando con Python…";
   resetStages(); setStage("load", "done"); setStage("process", "active");
+  initFileProgress();
   el("session-stats").textContent = "PROCESANDO";
   stageMessage("Procesando: localizando tarjeta, comparando preprocesamientos, leyendo con OCR… (puede tardar unos segundos por imagen)", "");
   try {
@@ -217,7 +322,7 @@ async function run() {
     }
     const body = JSON.stringify({archivos, solo_muestra: onlySamples});
     if (new Blob([body]).size > 4_300_000) throw new Error("El lote excede 4.3 MB. Selecciona menos imágenes.");
-    const response = await api("/api/process", {method: "POST", headers: {"Content-Type": "application/json"}, body});
+    const response = await streamApi("/api/process-stream", body, handleProgress);
     results = response.resultados;
     selected = 0;
     setStage("process", "done"); setStage("result", "done"); setStage("trace", "done");
@@ -243,6 +348,7 @@ function fieldHtml(title, f) {
   if (!f) return "";
   const empty = f.valor == null || f.valor === "";
   const extra = [];
+  if (f.confianza != null) extra.push(`Confianza OCR: ${esc(f.confianza)}%`);
   if (f.lectura_original) extra.push(`Lectura OCR original: <code>${esc(f.lectura_original)}</code>`);
   if (f.correcciones_ocr && f.correcciones_ocr.length) extra.push(`Corrección OCR: ${esc(f.correcciones_ocr.join("; "))}`);
   (f.alertas || []).forEach((a) => extra.push(`⚠ ${esc(a)}`));
@@ -263,9 +369,9 @@ function renderResults() {
   const count = (s) => results.filter((r) => r.estado === s).length;
   el("total-count").textContent = results.length;
   el("ine-count").textContent = results.filter((r) => r.clasificacion === "ine").length;
-  el("review-count").textContent = count("revision");
+  el("review-count").textContent = count("revision") + count("repetir");
   el("discard-count").textContent = count("descartado");
-  el("result-list").innerHTML = results.map((r, i) => `<button class="result-pill ${i === selected ? "active" : ""}" data-result="${i}" role="tab"><span class="name">${esc(r.archivo)}</span>${badge(r.estado)}</button>`).join("");
+  el("result-list").innerHTML = results.map((r, i) => `<button class="result-pill ${i === selected ? "active" : ""}" data-result="${i}" role="tab" aria-selected="${i === selected}"><span class="name">${esc(r.archivo)}</span>${badge(r.estado)}</button>`).join("");
   el("result-list").querySelectorAll("[data-result]").forEach((b) => b.addEventListener("click", () => { selected = Number(b.dataset.result); renderResults(); }));
   renderDetail(results[selected]);
 }
@@ -274,6 +380,7 @@ function banner(r) {
   const map = {
     listo: ["ok", "Credencial detectada y validada por formato", "Los identificadores cumplen formato y son consistentes. Esto NO prueba autenticidad; confirma contra el documento."],
     revision: ["warn", "Requiere revisión humana", "Hay evidencia parcial, campos pendientes o inconsistencias. Revisa los avisos marcados."],
+    repetir: ["warn", "La imagen no permite una lectura fiable", "Repite la captura con mejor luz, enfoque y la credencial completa dentro del marco."],
     descartado: ["off", "Descartado: no se encontró evidencia de INE/IFE", "No cumple las señales mínimas. Un CURP aislado no basta para aceptar un documento."],
     error: ["err", "No se pudo procesar", r.mensaje || "Archivo inválido."],
   }[r.estado] || ["off", r.estado, ""];
@@ -300,22 +407,24 @@ function renderDetail(r) {
   box.innerHTML = `
     ${banner(r)}
     <div class="detail-heading"><div><strong>${esc(r.archivo)}</strong><p>${esc(r.duracion_ms)} ms · clasificación: ${esc(String(r.clasificacion).toUpperCase())} · SHA-256 ${esc((r.sha256 || "").slice(0, 12))}…${r.muestra_ficticia ? " · MUESTRA FICTICIA" : ""}</p></div>${badge(r.estado)}</div>
-    <div class="field-section-label">IMAGEN ORIGINAL VS. PROCESADA</div>
-    <div class="visual-compare"><figure><img src="${esc(r.preview_original)}" alt="Imagen original"/><figcaption>ORIGINAL</figcaption></figure><figure><img src="${esc(r.preview_limpieza)}" alt="Imagen procesada"/><figcaption>PROCESADA · ${esc(t.estrategia_elegida)}</figcaption></figure></div>
-    <div class="evidence">${t.tarjeta_localizada ? "Tarjeta localizada" : "No se localizó la tarjeta"}${t.warp_perspective ? " · perspectiva corregida" : " · sin corrección de perspectiva"} · orientación: ${esc(t.orientacion)}. ${esc((t.notas_localizacion || []).join(" "))}</div>
-    <table class="strategies"><thead><tr><th>Estrategia</th><th>Confianza OCR</th><th>Palabras</th><th>Puntuación</th><th></th></tr></thead><tbody>${strategies}</tbody></table>
-    <div class="field-section-label">DECISIÓN DE CLASIFICACIÓN</div>
-    <div class="evidence"><b>Evidencias:</b> ${esc((r.evidencias || []).join(" · ") || "ninguna")}<br><b>Señales:</b> ${esc(sig.fuertes ?? 0)} fuertes · ${esc(sig.estructurales ?? 0)} estructurales · ${esc(sig.negativas ?? 0)} negativas. <small>${esc(sig.criterio || "")}</small></div>
     ${groups}
     ${mrzBlock}${codes}
     ${checks ? `<div class="field-section-label">VALIDACIÓN CRUZADA</div><ul class="checks">${checks}</ul>` : ""}
     ${link}
     ${(r.alertas || []).length ? `<div class="field-section-label">ALERTAS</div><ul class="alerts">${r.alertas.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>` : ""}
-    <div class="field-section-label">TRAZABILIDAD</div>
-    <div class="trace"><div><small>ORACLE</small><b>${esc(PERSIST_LABEL[p.oracle] || p.oracle || "—")}</b></div><div><small>SQL SERVER</small><b>${esc(PERSIST_LABEL[p.sqlserver] || p.sqlserver || "—")}</b></div><div><small>ESTADO</small><b>${esc(p.estado || "—")}</b></div></div>
-    <div class="evidence">${esc(p.detalle || "")}</div>
     <div class="review-actions"><span>Decisión humana (solo en esta sesión, no se guarda):</span>
-      <button class="btn btn-subtle small" data-decide="aceptada">Aceptar tras revisión</button><button class="btn btn-subtle small" data-decide="rechazada">Rechazar</button>${dec ? `<b class="decided">Registrada: ${esc(dec)}</b>` : ""}</div>`;
+      <button class="btn btn-subtle small" data-decide="aceptada">Aceptar tras revisión</button><button class="btn btn-subtle small" data-decide="rechazada">Rechazar</button>${dec ? `<b class="decided">Registrada: ${esc(dec)}</b>` : ""}</div>
+    <details class="technical-details"><summary>Ver detalles técnicos</summary>
+      <div class="field-section-label">IMAGEN ORIGINAL VS. PROCESADA</div>
+      <div class="visual-compare"><figure><img src="${esc(r.preview_original)}" alt="Imagen original"/><figcaption>ORIGINAL</figcaption></figure><figure><img src="${esc(r.preview_limpieza)}" alt="Imagen procesada"/><figcaption>PROCESADA · ${esc(t.estrategia_elegida)}</figcaption></figure></div>
+      <div class="evidence">${t.tarjeta_localizada ? "Tarjeta localizada" : "No se localizó la tarjeta"}${t.warp_perspective ? " · perspectiva corregida" : " · sin corrección de perspectiva"} · orientación: ${esc(t.orientacion)}. ${esc((t.notas_localizacion || []).join(" "))}</div>
+      <table class="strategies"><thead><tr><th>Estrategia</th><th>Confianza OCR</th><th>Palabras</th><th>Puntuación</th><th></th></tr></thead><tbody>${strategies}</tbody></table>
+      <div class="field-section-label">DECISIÓN DE CLASIFICACIÓN</div>
+      <div class="evidence"><b>Evidencias:</b> ${esc((r.evidencias || []).join(" · ") || "ninguna")}<br><b>Señales:</b> ${esc(sig.fuertes ?? 0)} fuertes · ${esc(sig.estructurales ?? 0)} estructurales · ${esc(sig.negativas ?? 0)} negativas. <small>${esc(sig.criterio || "")}</small></div>
+      <div class="field-section-label">TRAZABILIDAD</div>
+      <div class="trace"><div><small>ORACLE</small><b>${esc(PERSIST_LABEL[p.oracle] || p.oracle || "—")}</b></div><div><small>SQL SERVER</small><b>${esc(PERSIST_LABEL[p.sqlserver] || p.sqlserver || "—")}</b></div><div><small>ESTADO</small><b>${esc(p.estado || "—")}</b></div></div>
+      <div class="evidence">${esc(p.detalle || "")}</div>
+    </details>`;
   box.querySelectorAll("[data-decide]").forEach((b) => b.addEventListener("click", () => { decisions[r.archivo] = b.dataset.decide; renderDetail(r); }));
   const confirm = el("confirm-link");
   if (confirm) confirm.addEventListener("click", () => confirmLink(r));
@@ -402,7 +511,7 @@ async function boot() {
     } else if (health.entorno === "local") {
       el("privacy-message").textContent = "El OCR se ejecuta en tu equipo. En modo demo no se guardan imágenes ni campos. Si usas una INE real, hazlo en una red confiable y cierra el servidor al terminar.";
     }
-    if (!health.motores.tesseract) stageMessage("Tesseract no está instalado: el procesamiento no estará disponible hasta instalarlo (ver Guía).", "err");
+    if (!health.motores.ocr_disponible) stageMessage("No hay un motor OCR disponible en el servidor (ver Guía).", "err");
   } catch {
     el("server-status").textContent = "Motor Python no disponible";
     el("live-dot").classList.add("off");

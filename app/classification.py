@@ -17,6 +17,7 @@ from app import validation as v
 INE = "ine"
 NO_INE = "no_ine"
 REVISION = "revision"
+INSUFFICIENT = "imagen_insuficiente"
 ERROR = "error"
 
 _LABELS = ("CLAVE DE ELECTOR", "SECCION", "MUNICIPIO", "LOCALIDAD", "EMISION", "VIGENCIA", "DOMICILIO", "ANO DE REGISTRO")
@@ -41,7 +42,10 @@ def classify(text: str, extraction: dict[str, Any], visual: dict[str, Any],
         strong.append("Leyenda «CREDENCIAL PARA VOTAR»")
     mrz = extraction["mrz"]
     if mrz.get("lineas_validas") and mrz.get("emisor") == "MEX":
-        strong.append("MRZ de 3 líneas con emisor MEX")
+        # TD1 identifica el formato de una credencial de viaje/identidad, no al
+        # emisor INE. Tratarlo como señal fuerte produce falsos positivos con
+        # otras identificaciones mexicanas.
+        structure.append("MRZ TD1 de 3 líneas con emisor MEX")
     for code in extraction["codigos"]:
         if re.search(r"ine\.mx|ine\.org", code.get("valor", ""), re.I):
             strong.append("Código QR/PDF417 que referencia al INE")
@@ -64,19 +68,23 @@ def classify(text: str, extraction: dict[str, Any], visual: dict[str, Any],
         structure.append("Bloque de fotografía a la izquierda")
 
     # Documentos que contienen CURP pero son claramente otra cosa.
-    if re.search(r"(ACTA ?DE ?NACIMIENTO|CONSTANCIA ?DE ?SITUACION|CONTRATO|ESCRITURA|LICENCIA)", t):
-        negative.append("Leyendas de documento ajeno (acta, constancia, contrato, escritura o licencia)")
+    if re.search(r"(ACTA ?DE ?NACIMIENTO|CONSTANCIA ?DE ?SITUACION|CONTRATO|ESCRITURA|LICENCIA|PASAPORTE)", t):
+        negative.append("Leyendas de documento ajeno (acta, constancia, contrato, escritura, licencia o pasaporte)")
 
     signals = {"fuertes": len(strong), "estructurales": len(structure), "negativas": len(negative),
-               "criterio": "≥1 señal fuerte y ≥2 estructurales ⇒ INE; evidencia parcial ⇒ revisión"}
+               "criterio": "≥1 señal específica INE/IFE y ≥2 estructurales ⇒ INE; evidencia parcial ⇒ revisión"}
     evidence = strong + structure
 
     if visual.get("imagen_vacia"):
-        return NO_INE, ["Imagen sin contenido (contraste casi nulo)"], signals
+        return INSUFFICIENT, ["Imagen sin contenido: repite la captura"], signals
     if negative and not strong:
         return NO_INE, evidence + negative, signals
+    if visual.get("calidad_insuficiente") and not strong:
+        return INSUFFICIENT, evidence + ["Calidad insuficiente para clasificar con fiabilidad: repite la captura"], signals
     if strong and len(structure) >= 2 and not negative:
         return INE, evidence, signals
+    if mrz.get("lineas_validas") and len(structure) >= 2 and not negative:
+        return REVISION, evidence, signals
     if strong or len(structure) >= 2 and len(labels) >= 2:
         return REVISION, evidence, signals
     return NO_INE, evidence, signals

@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -33,13 +34,26 @@ def test_demo_sample_real_ocr():
 
 
 @requires_tesseract
+def test_demo_sample_streams_real_pipeline_events():
+    with client.stream("POST", "/api/process-stream",
+                       json={"archivos": [{"archivo": SAMPLE_NAMES[0]}], "solo_muestra": True}) as response:
+        assert response.status_code == 200
+        events = [json.loads(line) for line in response.iter_lines() if line]
+    stages = {event.get("etapa") for event in events if event["tipo"] == "etapa"}
+    assert {"imagen_recibida", "deteccion_documental", "extraccion_ocr", "validacion"} <= stages
+    assert events[-1]["tipo"] == "resultado"
+    assert events[-1]["resultados"][0]["clasificacion"] == "ine"
+
+
+@requires_tesseract
 def test_mixed_batch_and_explicit_pairing():
     files = [as_file(SAMPLE_NAMES[0], grupo="g", cara="front"), as_file(SAMPLE_NAMES[1], grupo="g", cara="back"),
              as_file(SAMPLE_NAMES[2]), as_file(SAMPLE_NAMES[3])]
     body = client.post("/api/process", json={"archivos": files}).json()
     by = {x["archivo"]: x for x in body["resultados"]}
     assert by[SAMPLE_NAMES[0]]["clasificacion"] == "ine" and by[SAMPLE_NAMES[0]]["vinculacion"]["estado"] == "tentativa"
-    assert by[SAMPLE_NAMES[2]]["estado"] == "descartado" and by[SAMPLE_NAMES[3]]["estado"] == "descartado"
+    assert by[SAMPLE_NAMES[2]]["estado"] == "descartado"
+    assert by[SAMPLE_NAMES[3]]["estado"] == "repetir"
     assert body["total"] == 4
 
 
@@ -47,6 +61,13 @@ def test_cloud_blocks_real_uploads(monkeypatch):
     monkeypatch.setenv("VERCEL", "1")
     r = client.post("/api/process", json={"archivos": [as_file(SAMPLE_NAMES[0])]})
     assert r.status_code == 403
+
+
+def test_demo_ignores_stale_local_access_token(monkeypatch):
+    monkeypatch.setenv("APP_MODE", "demo")
+    monkeypatch.setenv("APP_ACCESS_TOKEN", "token-local-residual")
+    assert client.get("/api/health").status_code == 200
+    assert client.post("/api/process", json={"archivos": [None]}).status_code == 200
     r = client.post("/api/process", json={"archivos": [{"archivo": "mi_ine_real.jpg", "imagen": "x"}],
                                           "solo_muestra": True})
     assert r.status_code == 403

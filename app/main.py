@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import binascii
 import hashlib
 import hmac
+import json
 import os
 from collections import Counter
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import envfile
@@ -25,7 +27,7 @@ from app.pipeline import Processor, zxingcpp
 from app.samples import SAMPLE_NAMES, sample_bytes
 
 PUBLIC = config.ROOT / "public"
-app = FastAPI(title="ADEA · INE Control", version="2.0.0", docs_url="/api/docs", redoc_url=None)
+app = FastAPI(title="ADEA · INE Control", version="5.0.0", docs_url="/api/docs", redoc_url=None)
 app.mount("/static", StaticFiles(directory=PUBLIC), name="static")
 
 
@@ -109,7 +111,9 @@ def health():
         "servicio": "operativo", "modo": mode(), "corporativo_configurado": configured(),
         "carga_real_habilitada": upload_enabled(), "entorno": "nube" if cloud else "local",
         "persistencia": {"oracle": status["oracle"], "sqlserver": status["sqlserver"]},
-        "motores": {"ocr": ocr_engine.engine(), "tesseract": ocr_engine.available(),
+        "motores": {"ocr": ocr_engine.engine(), "ocr_disponible": ocr_engine.available(),
+                    "tesseract": ocr_engine.engine() == "tesseract",
+                    "rapidocr": ocr_engine.engine() == "rapidocr",
                     "idioma_ocr": config.ocr_lang() if ocr_engine.engine() == "tesseract" else
                     ("es/en (PP-OCR)" if ocr_engine.engine() else None),
                     "opencv": cv2 is not None, "zxing_qr_pdf417": zxingcpp is not None},
@@ -120,7 +124,8 @@ def authorize(request: Request, *, force: bool = False):
     token = os.getenv("APP_ACCESS_TOKEN")
     if mode() == "corporate" and not token:
         raise HTTPException(503, "El modo corporativo requiere APP_ACCESS_TOKEN")
-    if (token or force) and not (token and hmac.compare_digest(request.headers.get("X-Access-Token", ""), token)):
+    required = force or mode() == "corporate"
+    if required and not (token and hmac.compare_digest(request.headers.get("X-Access-Token", ""), token)):
         raise HTTPException(401, "Token de acceso inválido")
 
 
@@ -174,8 +179,8 @@ def _name(file, index: int) -> str:
     return str(file.get("archivo", f"archivo_{index + 1}") if isinstance(file, dict) else f"archivo_{index + 1}")[:128]
 
 
-@app.post("/api/process")
-async def process(request: Request):
+async def _process_request(request: Request) -> tuple[list, bool]:
+    """Valida el sobre del lote antes de iniciar cualquier trabajo OCR."""
     authorize(request)
     length = request.headers.get("content-length")
     if length and length.isdigit() and int(length) > config.MAX_REQUEST_BYTES:
@@ -195,33 +200,104 @@ async def process(request: Request):
     if is_sample and any(not isinstance(f, dict) or f.get("archivo") not in SAMPLE_NAMES for f in files):
         raise HTTPException(403, "La ruta de muestra solo acepta los ejemplos integrados")
     if not ocr_engine.available():
-        raise HTTPException(503, "Tesseract OCR no está instalado en el servidor")
+        raise HTTPException(503, "No hay un motor OCR disponible en el servidor")
+    return files, is_sample
+
+
+def _decode_entry(file, index: int, is_sample: bool) -> tuple[str, bytes]:
+    if not isinstance(file, dict):
+        raise InvalidImage("Cada entrada debe contener nombre e imagen")
+    name, content = file["archivo"], file.get("imagen", "")
+    if not isinstance(name, str) or not isinstance(content, str):
+        raise InvalidImage("Archivo inválido")
+    data = sample_bytes(name) if is_sample else base64.b64decode(content.split(",", 1)[-1], validate=True)
+    return name, data
+
+
+def _attach_metadata(item: dict, file: dict, is_sample: bool) -> None:
+    for key in ("grupo", "cara"):
+        if isinstance(file.get(key), str):
+            item[key] = file[key][:64]
+    item["confirmada"] = file.get("confirmada") is True
+    item["muestra_ficticia"] = is_sample
+
+
+def _response(results: list[dict]) -> dict:
+    link_sides(results)
+    for item in results:
+        item["persistencia"] = persist(item)
+    return {"total": len(results), "conteo": dict(Counter(i["estado"] for i in results)),
+            "resultados": results, "modo": mode()}
+
+
+@app.post("/api/process")
+async def process(request: Request):
+    files, is_sample = await _process_request(request)
 
     results = []
     worker = Processor()
     for index, file in enumerate(files):
         digest = None
         try:
-            if not isinstance(file, dict):
-                raise InvalidImage("Cada entrada debe contener nombre e imagen")
-            name, content = file["archivo"], file.get("imagen", "")
-            if not isinstance(name, str) or not isinstance(content, str):
-                raise InvalidImage("Archivo inválido")
-            data = sample_bytes(name) if is_sample else base64.b64decode(content.split(",", 1)[-1], validate=True)
+            name, data = _decode_entry(file, index, is_sample)
             digest = hashlib.sha256(data).hexdigest()
             item = worker.process(data, name)
-            for key in ("grupo", "cara"):
-                if isinstance(file.get(key), str):
-                    item[key] = file[key][:64]
-            item["confirmada"] = file.get("confirmada") is True
-            item["muestra_ficticia"] = is_sample
+            _attach_metadata(item, file, is_sample)
             results.append(item)
         except (InvalidImage, ValueError, KeyError, binascii.Error, RuntimeError) as exc:
             results.append({"archivo": _name(file, index), "estado": "error", "clasificacion": "error",
                             "mensaje": str(exc), "sha256": digest,
                             "persistencia": {"estado": "no_ejecutada"}})
-    link_sides(results)
-    for item in results:  # incluye errores: la auditoría registra también los fallos de procesamiento
-        item["persistencia"] = persist(item)
-    return {"total": len(results), "conteo": dict(Counter(i["estado"] for i in results)),
-            "resultados": results, "modo": mode()}
+    return _response(results)
+
+
+@app.post("/api/process-stream")
+async def process_stream(request: Request):
+    """Procesa el lote y transmite eventos NDJSON reales por archivo y etapa."""
+    files, is_sample = await _process_request(request)
+
+    async def events():
+        results: list[dict] = []
+        worker = Processor()
+        loop = asyncio.get_running_loop()
+
+        def line(event: dict) -> bytes:
+            return (json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+
+        yield line({"tipo": "lote_iniciado", "total": len(files)})
+        for index, file in enumerate(files):
+            digest = None
+            try:
+                name, data = _decode_entry(file, index, is_sample)
+                digest = hashlib.sha256(data).hexdigest()
+                event_queue: asyncio.Queue = asyncio.Queue()
+
+                def notify(event: dict) -> None:
+                    event["indice"] = index
+                    loop.call_soon_threadsafe(event_queue.put_nowait, event)
+
+                task = asyncio.create_task(asyncio.to_thread(worker.process, data, name, notify))
+                while not task.done() or not event_queue.empty():
+                    try:
+                        event = await asyncio.wait_for(event_queue.get(), timeout=.15)
+                        yield line({"tipo": "etapa", **event})
+                    except asyncio.TimeoutError:
+                        continue
+                item = await task
+                _attach_metadata(item, file, is_sample)
+                results.append(item)
+                yield line({"tipo": "archivo_completado", "indice": index, "archivo": name,
+                            "estado": item["estado"], "clasificacion": item["clasificacion"],
+                            "duracion_ms": item["duracion_ms"]})
+            except (InvalidImage, ValueError, KeyError, binascii.Error, RuntimeError) as exc:
+                item = {"archivo": _name(file, index), "estado": "error", "clasificacion": "error",
+                        "mensaje": str(exc), "sha256": digest, "persistencia": {"estado": "no_ejecutada"}}
+                results.append(item)
+                yield line({"tipo": "archivo_error", "indice": index, "archivo": item["archivo"],
+                            "mensaje": str(exc)})
+
+        response = _response(results)
+        yield line({"tipo": "resultado", **response})
+
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
