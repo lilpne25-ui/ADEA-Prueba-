@@ -7,7 +7,7 @@ import os
 import statistics
 import sys
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PIL import Image
 
@@ -19,6 +19,7 @@ class OcrResult:
     text: str
     mean_confidence: float | None  # media de confianza por palabra reportada por Tesseract (0-100)
     words: int
+    tokens: list[dict] = field(default_factory=list)
 
 
 _rapid = None
@@ -57,9 +58,12 @@ def _run_rapidocr(image: Image.Image) -> OcrResult:
     if not result:
         return OcrResult("", None, 0)
     boxes = []
+    tokens = []
     for box, text, score in result:
         ys = [p[1] for p in box]
         boxes.append(((min(ys) + max(ys)) / 2, max(ys) - min(ys), min(p[0] for p in box), text, float(score)))
+        tokens.append({"texto": text, "confianza": round(float(score) * 100, 1),
+                       "caja": [[round(float(x), 1), round(float(y), 1)] for x, y in box]})
     boxes.sort()
     lines: list[list[tuple]] = []
     for b in boxes:
@@ -69,7 +73,8 @@ def _run_rapidocr(image: Image.Image) -> OcrResult:
             lines.append([b])
     text = "\n".join(" ".join(t[3] for t in sorted(line, key=lambda t: t[2])) for line in lines)
     scores = [b[4] for b in boxes]
-    return OcrResult(text, round(statistics.fmean(scores) * 100, 1), sum(len(b[3].split()) for b in boxes))
+    return OcrResult(text, round(statistics.fmean(scores) * 100, 1),
+                     sum(len(b[3].split()) for b in boxes), tokens)
 
 
 def run(image: Image.Image, psm: int = 6, whitelist: str | None = None, lang: str | None = None) -> OcrResult:
@@ -103,6 +108,7 @@ def _parse_tsv(tsv: str) -> OcrResult:
     lines: dict[tuple[str, str, str], list[str]] = {}
     confs: list[float] = []
     words = 0
+    tokens: list[dict] = []
     for row in tsv.splitlines()[1:]:
         cols = row.split("\t")
         if len(cols) < 12 or cols[0] != "5":
@@ -118,6 +124,11 @@ def _parse_tsv(tsv: str) -> OcrResult:
             conf = -1
         if conf >= 0:
             confs.append(conf)
+        try:
+            box = [int(cols[6]), int(cols[7]), int(cols[8]), int(cols[9])]
+        except ValueError:
+            box = []
+        tokens.append({"texto": word, "confianza": round(conf, 1) if conf >= 0 else None, "caja": box})
         words += 1
     text = "\n".join(" ".join(ws) for ws in lines.values())
-    return OcrResult(text, round(statistics.fmean(confs), 1) if confs else None, words)
+    return OcrResult(text, round(statistics.fmean(confs), 1) if confs else None, words, tokens)

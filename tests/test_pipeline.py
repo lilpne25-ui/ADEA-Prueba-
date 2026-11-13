@@ -99,6 +99,13 @@ def test_mrz_normalization_trims_and_logs():
     assert lines[0].startswith("IDMEX") and len(lines) == 3
 
 
+def test_mrz_optional_data_is_preserved():
+    line = "IDMEX1234567897ABC123<<<<<<<<<"
+    normalized, notes = extraction._mrz_positional(line, extraction._MRZ_SHAPES[0])
+    assert normalized == line
+    assert notes == []
+
+
 def test_no_false_mrz_from_electoral_labels():
     assert extraction.normalize_mrz_lines("REGISTRO 2020 EMISION 2021 VIGENCIA 2031\nESTADO 15 SECCION 1234") == []
 
@@ -124,9 +131,27 @@ def test_curp_and_elector_without_issuer_goes_to_review_or_discard_never_ine():
     assert cat != classification.INE
 
 
+def test_generic_mexican_td1_is_never_classified_as_ine():
+    extracted = info("", mrz_lines())
+    cat, evidence, _ = classification.classify(
+        "",
+        extracted,
+        visual(bloque_foto_izquierda=True),
+        True,
+    )
+    assert cat != classification.INE
+    assert "MRZ TD1 de 3 líneas con emisor MEX" in evidence
+
+
+def test_passport_with_mrz_is_not_ine():
+    text = "ESTADOS UNIDOS MEXICANOS\nPASAPORTE\nP<MEXDEMO<PERSONA<<<<<<<<<<<<<<<<<<<<"
+    cat, _, _ = classification.classify(text, info(text, mrz_lines()), visual(), True)
+    assert cat == classification.NO_INE
+
+
 def test_empty_image_discarded():
     cat, _, _ = classification.classify("", info(""), {"imagen_vacia": True}, False)
-    assert cat == classification.NO_INE
+    assert cat == classification.INSUFFICIENT
 
 
 def test_binarization_and_invalid_file():
@@ -156,6 +181,8 @@ def test_pipeline_with_simulated_ocr_ready():
     r = worker.process(synthetic_ine(), "muestra.png")
     assert r["clasificacion"] == "ine"
     assert r["campos"]["curp"]["estado"] == v.VALIDADO
+    assert r["campos"]["curp"]["confianza"] == 80.0
+    assert "evidencia_visual" in r["campos"]["curp"]
     assert r["preview_limpieza"].startswith("data:image/jpeg;base64,")
     assert r["tecnicas"]["estrategias_comparadas"]
 

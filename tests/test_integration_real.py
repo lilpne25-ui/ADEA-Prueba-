@@ -108,7 +108,8 @@ def test_3_heterogeneous_batch(real_env):
     elapsed = time.monotonic() - start
     by = {x["archivo"]: x for x in body["resultados"]}
     assert by[SAMPLE_NAMES[0]]["estado"] == "listo" and by[SAMPLE_NAMES[0]]["campos"]["curp"]["valor"]
-    assert by[SAMPLE_NAMES[2]]["estado"] == "descartado" and by[SAMPLE_NAMES[3]]["estado"] == "descartado"
+    assert by[SAMPLE_NAMES[2]]["estado"] == "descartado"
+    assert by[SAMPLE_NAMES[3]]["estado"] == "repetir"  # imagen insuficiente: no se confunde con documento ajeno
     assert by["CORRUPTO.png"]["estado"] == "error" and by["CORRUPTO.png"]["persistencia"]["sqlserver"] == "auditado"
     for name in SAMPLE_NAMES:
         assert by[name]["duracion_ms"] > 0 and by[name]["persistencia"]["sqlserver"] == "auditado"

@@ -23,7 +23,7 @@
         <span class="brand-divider"></span>
         <span class="brand-label">Mesa de control documental <small>Prueba técnica independiente · Python</small></span>
       </div>
-      <div class="header-right"><span class="live-dot" id="live-dot"></span><span id="server-status">Conectando al motor Python</span><span class="build">V4.0</span></div>
+      <div class="header-right"><span class="live-dot" id="live-dot"></span><span id="server-status">Conectando al motor Python</span><span class="build">V5.0</span></div>
     </header>
 
     <div class="notice-bar" role="note">Proyecto independiente desarrollado como prueba técnica. No constituye software oficial de ADEA.</div>
@@ -34,7 +34,7 @@
         <button class="tab" role="tab" data-tab="results">Resultados <span class="tab-count" id="tab-count" hidden>0</span></button>
         <button class="tab" role="tab" data-tab="guide">Guía</button>
         <button class="tab" role="tab" data-tab="tech">Arquitectura</button>
-        <button class="tab" role="tab" data-tab="infra">Infraestructura</button>
+        <button class="tab" role="tab" data-tab="infra">Sistemas</button>
       </nav>
 
       <!-- ============ LABORATORIO ============ -->
@@ -57,7 +57,7 @@
             <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff" multiple hidden />
             <input type="file" id="camera-input" accept="image/*" capture="environment" hidden />
             <div class="upload-actions">
-              <button class="btn btn-subtle" id="camera-btn" type="button">Tomar fotografía <span>◉</span></button>
+              <button class="btn btn-subtle" id="camera-btn" type="button">Escanear INE <span>◉</span></button>
               <button class="btn btn-subtle" id="pair-btn" type="button" hidden>Usar mi celular <span>⌁</span></button>
               <button class="btn btn-subtle" id="sample-set" type="button">Lote de muestra ficticio <span>→</span></button>
             </div>
@@ -74,6 +74,7 @@
               <li data-stage="result"><b>3</b><div><strong>Resultado</strong><small>Éxito, revisión, descarte o error</small></div></li>
               <li data-stage="trace"><b>4</b><div><strong>Trazabilidad</strong><small>Estado de Oracle y SQL Server</small></div></li>
             </ol>
+            <div class="file-progress" id="file-progress" aria-live="polite"></div>
             <div class="stage-message" id="stage-message" role="status">Selecciona imágenes o carga el lote de muestra para comenzar.</div>
             <div class="legend">
               <span class="status-badge listo">LISTO</span> validado por formato y consistente ·
@@ -113,7 +114,7 @@
           <details><summary><b>9</b> ¿Cómo funciona la auditoría?</summary><p>En modo corporativo, cada archivo (aceptado, enviado a revisión, descartado o con error) deja un registro en SQL Server con su huella (hash), resultado y duración, sin imágenes ni datos personales. Oracle recibe solo expedientes «Listo».</p></details>
           <details><summary><b>10</b> ¿Qué es el modo demostración?</summary><p>Procesa todo en memoria, no escribe en ninguna base de datos y en la versión pública solo acepta las muestras ficticias. Nunca subas una INE real a una demo pública.</p></details>
         </div>
-        <div class="callout"><span class="callout-icon">ⓘ</span><div><strong>Desde un teléfono en tu red local</strong><p>Ejecuta <code>INICIAR_WINDOWS.bat</code>, conecta el teléfono a la misma Wi‑Fi y abre <code>http://IP-DE-TU-PC:8000</code>. Usa solo una red confiable y no abras el puerto a Internet.</p></div></div>
+        <div class="callout"><span class="callout-icon">ⓘ</span><div><strong>Desde un teléfono en tu red privada</strong><p>Usa «Usar mi celular» y abre únicamente la dirección HTTPS mostrada. La cámara integrada requiere un certificado confiable; para operación privada se recomienda Tailscale Serve o un proxy TLS autorizado. No expongas las bases ni el puerto a Internet.</p></div></div>
       </section>
 
       <!-- ============ ARQUITECTURA ============ -->
@@ -168,12 +169,12 @@
     <dialog class="camera-sheet" id="camera-sheet" aria-label="Cámara con encuadre">
       <div class="camera-stage">
         <video id="camera-video" playsinline muted autoplay></video>
+        <img id="camera-preview" alt="Vista previa de la captura" hidden />
         <div class="camera-guide" id="camera-guide"><span>Alinea la credencial dentro del marco</span></div>
       </div>
       <div class="camera-bar">
         <span class="camera-quality" id="camera-quality" role="status">Iniciando cámara…</span>
-        <label class="camera-auto"><input type="checkbox" id="camera-auto" checked /> Procesar al capturar</label>
-        <div class="camera-actions"><button class="btn btn-subtle" id="camera-close" type="button">Cerrar</button><button class="btn btn-primary" id="camera-shot" type="button">Capturar</button></div>
+        <div class="camera-actions"><button class="btn btn-subtle" id="camera-close" type="button">Cerrar</button><button class="btn btn-subtle" id="camera-repeat" type="button" hidden>Repetir</button><button class="btn btn-primary" id="camera-shot" type="button">Capturar</button><button class="btn btn-primary" id="camera-confirm" type="button" hidden>Usar y procesar</button></div>
       </div>
     </dialog>
     <footer><span>INE CONTROL / PYTHON</span><span>Proyecto independiente desarrollado como prueba técnica. No constituye software oficial de ADEA.</span><span>2026</span></footer>

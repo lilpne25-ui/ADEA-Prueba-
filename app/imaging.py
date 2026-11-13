@@ -159,14 +159,23 @@ def visual_features(image: Image.Image) -> dict[str, float | bool]:
     contrast = float(gray.std())
     out: dict[str, float | bool] = {
         "relacion_aspecto": round(w / h, 3), "contraste": round(contrast, 1),
+        "brillo_medio": round(float(gray.mean()), 1),
+        "resolucion_ancho": w, "resolucion_alto": h,
         "imagen_vacia": contrast < 6.0,
     }
     if cv2 is not None:
-        edges = cv2.Canny(gray.astype(np.uint8), 60, 160)
+        gray8 = gray.astype(np.uint8)
+        edges = cv2.Canny(gray8, 60, 160)
         out["densidad_bordes"] = round(float((edges > 0).mean()), 4)
+        out["nitidez_laplaciano"] = round(float(cv2.Laplacian(gray8, cv2.CV_64F).var()), 1)
+        out["porcentaje_reflejo"] = round(float((gray8 >= 248).mean()) * 100, 2)
         # Bloque de retrato: región izquierda con textura moderada y sin texto denso.
         left = gray[int(h * .25):int(h * .75), int(w * .03):int(w * .33)]
         out["bloque_foto_izquierda"] = bool(left.size and 8 < left.std() < 90)
+        out["calidad_insuficiente"] = bool(
+            out["imagen_vacia"] or out["brillo_medio"] < 25 or out["brillo_medio"] > 245
+            or out["nitidez_laplaciano"] < 12 or min(w, h) < 240
+        )
     return out
 
 

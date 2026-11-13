@@ -223,21 +223,23 @@ def extract(texts: list[str], mrz_lines: list[str] | None = None,
 
 
 _MRZ_SHAPES = {
-    0: "LLLLLAAAAAAAAADFFFFFFFFFFFFFFF",   # IDMEX + n.º documento + verificador + relleno
-    1: "DDDDDDDLDDDDDDDLLLFFFFFFFFFFFD",   # nacimiento, sexo, vencimiento, nacionalidad, relleno, compuesto
+    0: "LLLLLAAAAAAAAADAAAAAAAAAAAAAAA",   # IDMEX + n.º documento + verificador + datos opcionales
+    1: "DDDDDDDLDDDDDDDLLLAAAAAAAAAAAD",   # nacimiento, sexo, vencimiento, nacionalidad, opcionales, compuesto
 }
 
 
 def _mrz_positional(line: str, shape: str) -> tuple[str, list[str]]:
-    """Corrección posicional documentada: en zonas de relleno solo puede haber '<'; en zonas numéricas,
-    dígitos. Cada cambio se registra; el resultado sigue siendo una hipótesis (no un dato confirmado)."""
+    """Corrige solo posiciones inequívocas de letra/dígito.
+
+    Las zonas opcionales TD1 aceptan datos o relleno, por lo que nunca se
+    convierten a ``<`` para forzar una forma sintética. Cada cambio se registra
+    y el resultado sigue siendo una hipótesis, no un dato confirmado.
+    """
     out, notes = [], []
     aligned = len(line) == len(shape)  # con longitud distinta las posiciones no son fiables
     for i, ch in enumerate(line[:len(shape)]):
         kind, new = shape[i], ch
-        if kind == "F" and ch != "<":
-            new = "<"
-        elif not aligned:
+        if not aligned:
             pass
         elif kind == "D" and not ch.isdigit() and ch in _TO_DIGIT:
             new = _TO_DIGIT[ch]

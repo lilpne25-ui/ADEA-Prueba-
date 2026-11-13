@@ -35,6 +35,8 @@ def test_clear_text():
     r = run(base())
     assert r["clasificacion"] == "ine" and r["campos"]["curp"]["valor"] in (SYNTH["curp"], SYNTH["curp"][:16] + "O" + SYNTH["curp"][17])
     assert r["campos"]["clave_elector"]["valor"] == SYNTH["elector"]
+    assert r["campos"]["clave_elector"]["confianza"] is not None
+    assert r["campos"]["clave_elector"]["evidencia_visual"]
 
 
 def test_low_contrast():
@@ -89,13 +91,15 @@ def test_rotated_180_is_recovered():
 
 
 def test_negative_samples():
-    for name in SAMPLE_NAMES[2:]:
-        r = Processor().process(sample_bytes(name), name)
-        assert r["clasificacion"] == "no_ine" and r["estado"] == "descartado", name
+    contract = Processor().process(sample_bytes(SAMPLE_NAMES[2]), SAMPLE_NAMES[2])
+    assert contract["clasificacion"] == "no_ine" and contract["estado"] == "descartado"
+    noise = Processor().process(sample_bytes(SAMPLE_NAMES[3]), SAMPLE_NAMES[3])
+    assert noise["clasificacion"] == "imagen_insuficiente" and noise["estado"] == "repetir"
 
 
 def test_blank_white_image():
-    assert run(Image.new("RGB", (800, 500), "white"))["estado"] == "descartado"
+    r = run(Image.new("RGB", (800, 500), "white"))
+    assert r["estado"] == "repetir" and r["clasificacion"] == "imagen_insuficiente"
 
 
 def test_back_side_reads_codes_and_mrz():

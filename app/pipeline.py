@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
     zxingcpp = None
 
 OcrFn = Callable[..., ocr_engine.OcrResult]
+EventFn = Callable[[dict[str, Any]], None]
 MRZ_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<"
 
 
@@ -63,6 +64,33 @@ def _vocab_hits(text: str) -> int:
     return sum(1 for word in _VOCAB if word in t)
 
 
+def _candidate_score(res: ocr_engine.OcrResult) -> float:
+    """Prioriza lecturas que recuperan señales útiles, no texto verboso."""
+    compact = extraction.plain(res.text).replace(" ", "")
+    identifiers = int(bool(CURP_RE.search(compact))) + int(bool(ELECTOR_RE.search(compact)))
+    return round(_score(res) + identifiers * 18 + _vocab_hits(res.text) * 1.5, 1)
+
+
+def _annotate_fields(fields: dict[str, dict[str, Any]], result: ocr_engine.OcrResult, strategy: str) -> None:
+    """Agrega confianza y cajas OCR sin convertirlas en prueba de autenticidad."""
+    for item in fields.values():
+        value = item.get("valor")
+        if not value:
+            item.setdefault("confianza", None)
+            item.setdefault("evidencia_visual", [])
+            continue
+        target = extraction.plain(str(value)).replace(" ", "")
+        matches = []
+        for token in result.tokens:
+            token_text = extraction.plain(str(token.get("texto", ""))).replace(" ", "")
+            if token_text and (token_text in target or target in token_text):
+                matches.append(token)
+        confidences = [t["confianza"] for t in matches if isinstance(t.get("confianza"), (int, float))]
+        item["confianza"] = round(sum(confidences) / len(confidences), 1) if confidences else result.mean_confidence
+        item["evidencia_visual"] = [{"texto": t.get("texto"), "caja": t.get("caja")} for t in matches[:6]]
+        item.setdefault("evidencia", f"Detectado por OCR en la estrategia {strategy}.")
+
+
 @dataclass
 class Processor:
     ocr_fn: OcrFn = ocr_engine.run
@@ -95,12 +123,21 @@ class Processor:
                 best = (score, lines, notes)
         return best[1], best[2]
 
-    def process(self, data: bytes, filename: str = "imagen.jpg") -> dict[str, Any]:
+    def process(self, data: bytes, filename: str = "imagen.jpg", on_event: EventFn | None = None) -> dict[str, Any]:
+        def emit(stage: str, message: str, **details: Any) -> None:
+            if on_event:
+                on_event({"etapa": stage, "archivo": filename[:128], "mensaje": message, **details})
+
         started = time.monotonic()
+        emit("imagen_recibida", "Imagen recibida y validando formato")
         original = imaging.load(data)
-        visual = imaging.visual_features(original)
+        original_quality = imaging.visual_features(original)
+        emit("deteccion_documental", "Buscando contorno ID-1 y perspectiva")
         loc = imaging.locate_card(original)
         card = loc.image
+        visual = imaging.visual_features(card)
+        emit("localizacion_roi", "Tarjeta localizada" if loc.found else "Sin contorno confiable; se analizará la imagen completa",
+             tarjeta_localizada=loc.found, perspectiva=loc.perspective_applied)
         if max(card.size) > 1800:
             card = card.copy()
             card.thumbnail((1800, 1800))
@@ -112,12 +149,14 @@ class Processor:
             # RapidOCR ya normaliza internamente y es ~5× más lento por pasada en CPU: se comparan
             # solo dos estrategias para respetar los límites de tiempo de una función serverless.
             candidates = {k: candidates[k] for k in ("original", "gris_contraste") if k in candidates}
+        emit("correccion_visual", f"Comparando {len(candidates)} estrategias de preprocesamiento")
         for name, variant in candidates.items():
+            emit("extraccion_ocr", f"OCR real sobre estrategia {name}", estrategia=name)
             res = self._read(variant, psm=6)
             reads[name] = (variant, res)
             comparison.append({"estrategia": name, "confianza_media": res.mean_confidence,
-                               "palabras": res.words, "puntuacion": _score(res)})
-        best_name = max(reads, key=lambda k: _score(reads[k][1]))
+                               "palabras": res.words, "puntuacion": _candidate_score(res)})
+        best_name = max(reads, key=lambda k: _candidate_score(reads[k][1]))
         best_img, best_res = reads[best_name]
         orientation = "sin cambios"
         if _vocab_hits(best_res.text) < 2:
@@ -147,13 +186,17 @@ class Processor:
                 mrz_lines, mrz_notes = alt_lines, alt_notes
 
         codes = decode_codes(card) or decode_codes(original)
+        emit("extraccion", "Extrayendo campos, MRZ y códigos")
         info = extraction.extract(ordered, mrz_lines, codes)
+        _annotate_fields(info["campos"], best_res, best_name)
         if mrz_notes and info["mrz"].get("lineas"):
             info["mrz"]["correcciones_ocr"] = mrz_notes
             info["mrz"]["nota"] = "MRZ con corrección posicional de caracteres OCR: hipótesis, no dato confirmado."
         category, evidence, signals = classification.classify("\n".join(ordered), info, visual, loc.found)
+        emit("validacion", "Validando formatos, consistencia y clasificación", clasificacion=category)
 
-        status = {"ine": "revision", "revision": "revision", "no_ine": "descartado"}[category]
+        status = {"ine": "revision", "revision": "revision", "no_ine": "descartado",
+                  "imagen_insuficiente": "repetir"}[category]
         campos = info["campos"]
         if category == "ine" and campos["curp"]["estado"] == v.VALIDADO \
                 and campos["clave_elector"]["estado"] == v.VALIDADO \
@@ -162,7 +205,7 @@ class Processor:
         alerts = [a for f in campos.values() for a in f["alertas"]]
         alerts += [f"Inconsistencia: {c['prueba']}" for c in info["consistencia"] if c["resultado"] is False]
 
-        keep_text = category != "no_ine"
+        keep_text = category not in ("no_ine", "imagen_insuficiente")
         return {
             "archivo": filename[:128], "sha256": hashlib.sha256(data).hexdigest(),
             "clasificacion": category, "estado": status, "evidencias": evidence, "senales": signals,
@@ -175,9 +218,11 @@ class Processor:
                 "tarjeta_localizada": loc.found, "warp_perspective": loc.perspective_applied,
                 "notas_localizacion": loc.notes, "orientacion": orientation,
                 "estrategias_comparadas": comparison, "estrategia_elegida": best_name,
-                "nota": comparison_note, "ocr": "Tesseract local", "idioma_ocr": __import__("app.config", fromlist=["x"]).ocr_lang(),
+                "nota": comparison_note, "ocr": ocr_engine.engine(),
+                "idioma_ocr": __import__("app.config", fromlist=["x"]).ocr_lang()
+                if ocr_engine.engine() == "tesseract" else "es/en (PP-OCR)",
                 "opencv": cv2 is not None, "qr_pdf417": zxingcpp is not None,
-                "caracteristicas_visuales": visual,
+                "caracteristicas_visuales": visual, "calidad_entrada": original_quality,
             },
             "duracion_ms": round((time.monotonic() - started) * 1000),
             "persistencia": {"estado": "pendiente"},

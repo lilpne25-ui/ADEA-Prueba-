@@ -2,7 +2,7 @@
    - Guarda en caché SOLO el armazón estático (HTML/CSS/JS/iconos) para que la app abra sin red.
    - NUNCA guarda respuestas de /api/ (pueden contener datos de documentos): siempre van a la red. */
 "use strict";
-const CACHE = "ine-control-v4";
+const CACHE = "ine-control-v5-20261113";
 const SHELL = ["/", "/static/styles.css", "/static/fixes.css", "/static/extra.css", "/static/app.js",
   "/static/icons/icon-192.png", "/static/icons/icon-512.png", "/static/icons/favicon-32.png", "/manifest.webmanifest"];
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -233,12 +234,17 @@ def _outbox() -> Path:
     return Path(os.getenv("AUDIT_OUTBOX_DIR", "data")) / "audit_outbox.jsonl"
 
 
+_outbox_lock = threading.Lock()
+
+
 def _queue_outbox(record: dict[str, Any]) -> bool:
     try:
         path = _outbox()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
+        with _outbox_lock, path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({k: record[k] for k in _AUDIT_KEYS} | {"queued_at": time.time()}) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
         return True
     except OSError:
         return False
@@ -249,15 +255,18 @@ def replay_outbox() -> dict[str, int]:
     if not path.exists():
         return {"reenviados": 0, "pendientes": 0}
     pending, sent = [], 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            sqlserver_audit(json.loads(line))
-            sent += 1
-        except Exception:  # noqa: BLE001
-            pending.append(line)
-    path.write_text("\n".join(pending) + ("\n" if pending else ""), encoding="utf-8")
+    with _outbox_lock:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                sqlserver_audit(json.loads(line))
+                sent += 1
+            except Exception:  # noqa: BLE001
+                pending.append(line)
+        temp = path.with_suffix(path.suffix + ".tmp")
+        temp.write_text("\n".join(pending) + ("\n" if pending else ""), encoding="utf-8")
+        os.replace(temp, path)
     return {"reenviados": sent, "pendientes": len(pending)}
 
 

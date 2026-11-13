@@ -21,6 +21,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
       - name: Dependencias
         run: pip install -r requirements-dev.txt
+      - name: Validación estática Python y JavaScript
+        run: |
+          python -m compileall -q app scripts
+          node --check public/app.js
       - name: Pruebas (unitarias, API, OCR real con Tesseract, seguridad; integración con BD real se omite)
         run: python -m pytest -q -W ignore --junitxml=pytest-report.xml
       - name: Motor de la nube (RapidOCR) sobre las muestras sintéticas
@@ -34,7 +38,10 @@ jobs:
           assert ocr.engine() == "rapidocr"
           got = {n: Processor().process(sample_bytes(n), n)["clasificacion"] for n in SAMPLE_NAMES}
           print(got)
-          assert got[SAMPLE_NAMES[0]] == "ine" and got[SAMPLE_NAMES[2]] == "no_ine" and got[SAMPLE_NAMES[3]] == "no_ine"
+          assert got[SAMPLE_NAMES[0]] == "ine"
+          assert got[SAMPLE_NAMES[1]] in ("revision", "ine")
+          assert got[SAMPLE_NAMES[2]] == "no_ine"
+          assert got[SAMPLE_NAMES[3]] == "imagen_insuficiente"
           PY
       - uses: actions/upload-artifact@v4
         if: always()
