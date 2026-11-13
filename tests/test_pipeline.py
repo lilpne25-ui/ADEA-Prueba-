@@ -128,8 +128,11 @@ def test_ocr_confusion_corrected_but_pending():
 
 
 def test_xss_payload_stays_inert_text():
-    c = info("NOMBRE\n<SCRIPT>ALERT(1)</SCRIPT>\nAB\nCD\nDOMICILIO\nZZ")["campos"]
-    assert "<SCRIPT>" in c["apellido_paterno"]["valor"]  # el backend no ejecuta; la UI escapa (ver test_security)
+    i = info("NOMBRE\n<SCRIPT>ALERT(1)</SCRIPT>\nAB\nCD\nDOMICILIO\n<IMG SRC=X ONERROR=ALERT(1)> 10\nZZ")
+    # V6: los renglones de nombre solo aceptan palabras en mayúsculas, así que el marcado se descarta.
+    assert all("<" not in (i["campos"][k]["valor"] or "") for k in ("apellido_paterno", "apellido_materno", "nombres"))
+    # El texto libre del domicilio se conserva como cadena inerte; la UI lo escapa (ver test_security).
+    assert "<IMG" in (i["domicilio_texto"] or "")
 
 
 def test_mrz_normalization_trims_and_logs():
@@ -234,3 +237,25 @@ def test_pipeline_with_simulated_ocr_non_ine():
 
 def test_demo_never_writes():
     assert persist({"estado": "listo"})["estado"] == "demo_sin_persistencia"
+
+
+def test_secondary_engine_fills_gaps_but_never_overrides_primary():
+    from app.extraction import merge_secondary
+    primary = info("INSTITUTO NACIONAL ELECTORAL\nCURP " + SYNTH["curp"])["campos"]
+    secondary = info(TEXT)["campos"]
+    secondary["curp"] = v.validate_curp(SYNTH["curp"])
+    merge_secondary(primary, secondary)
+    assert primary["seccion"]["valor"] == "1234" and primary["seccion"]["fuente"] == "rapidocr"
+    assert "Coinciden" in primary["curp"]["evidencia"]
+    other = info("CURP " + SYNTH["curp"])["campos"]
+    conflict = info(TEXT)["campos"]
+    other["seccion"] = v.field("9999", v.DETECTADO)
+    merge_secondary(other, conflict)
+    assert other["seccion"]["valor"] == "9999" and other["seccion"]["alertas"]
+
+
+def test_name_lines_drop_side_labels_and_ocr_noise():
+    from app.extraction import _clean_name_line
+    assert _clean_name_line("NOMBRE SEXO H") == "NOMBRE"
+    assert _clean_name_line("ee DE LA CRUZ ae |") == "DE LA CRUZ"
+    assert _clean_name_line("MARTINEZ wa 3") == "MARTINEZ"

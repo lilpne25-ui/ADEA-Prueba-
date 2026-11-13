@@ -108,6 +108,12 @@ def locate_card(image: Image.Image) -> Localization:
             candidates.append((area, (tl, tr, br, bl)))
         if candidates:
             break
+    method = "bordes"
+    if not candidates:
+        # Respaldo: la tarjeta es clara y poco saturada frente a fondos de color (mano, mesa, tela).
+        # Útil cuando los dedos o el bajo contraste fragmentan los bordes y Canny no cierra el contorno.
+        candidates = [(a, tuple(_order_corners(q))) for a, q in _bright_card_regions(small)]
+        method = "segmentacion_por_color"
     if not candidates:
         return Localization(image, False, False, False,
                             ["No se identificó un contorno rectangular con proporción de tarjeta."])
@@ -125,9 +131,154 @@ def locate_card(image: Image.Image) -> Localization:
         warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
         width, height = height, width
     skew = abs(float(quad[1][1] - quad[0][1])) + abs(float(quad[2][0] - quad[1][0]))
-    return Localization(Image.fromarray(warped), True, True, True,
-                        [f"Tarjeta localizada; perspectiva corregida ({width}×{height}px)."],
-                        quad.round(1).tolist())
+    note = f"Tarjeta localizada ({method}); perspectiva corregida ({width}×{height}px)."
+    return Localization(Image.fromarray(warped), True, True, True, [note], quad.round(1).tolist())
+
+
+def _bright_card_regions(small: np.ndarray) -> list[tuple[float, np.ndarray]]:
+    """Regiones claras y poco saturadas con forma de tarjeta ID-1 (relleno ≥ 70 % de su rectángulo)."""
+    hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
+    total = small.shape[0] * small.shape[1]
+    found: list[tuple[float, np.ndarray]] = []
+    for s_max, v_min in ((55, 150), (75, 125)):
+        mask = ((hsv[..., 1] < s_max) & (hsv[..., 2] > v_min)).astype(np.uint8) * 255
+        if mask.mean() > 255 * 0.85:  # fondo claro: esta estrategia no distingue la tarjeta
+            continue
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8), iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((7, 7), np.uint8))
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < total * 0.04:
+                continue
+            rect = cv2.minAreaRect(contour)
+            rw, rh = rect[1]
+            ratio = max(rw, rh) / max(min(rw, rh), 1.0)
+            if 1.35 <= ratio <= 1.9 and area / max(rw * rh, 1.0) >= 0.7:
+                found.append((area, cv2.boxPoints(rect).astype(np.float32)))
+        if found:
+            break
+    return found
+
+
+def card_regions(image: Image.Image, max_cards: int = 2) -> list[Image.Image]:
+    """Separa varias credenciales en una sola foto (p. ej. frente y reverso juntos en una captura).
+
+    Devuelve recortes enderezados SOLO si hay ≥2 tarjetas de tamaño parecido que no se traslapan;
+    en cualquier otro caso devuelve [] y la imagen se procesa completa como antes."""
+    if cv2 is None:
+        return []
+    rgb = np.array(image)
+    h, w = rgb.shape[:2]
+    scale = 900 / max(h, w) if max(h, w) > 900 else 1.0
+    small = cv2.resize(rgb, None, fx=scale, fy=scale) if scale != 1.0 else rgb
+    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY), (5, 5), 0)
+    total = small.shape[0] * small.shape[1]
+    boxes: list[tuple[float, np.ndarray]] = []
+    for low, high in ((20, 80), (40, 120)):
+        edges = cv2.morphologyEx(cv2.Canny(gray, low, high), cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8), iterations=2)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            rect = cv2.minAreaRect(contour)
+            rw, rh = rect[1]
+            area = rw * rh
+            ratio = max(rw, rh) / max(min(rw, rh), 1.0)
+            if area >= total * 0.10 and 1.35 <= ratio <= 1.9 and cv2.contourArea(cv2.convexHull(contour)) / max(area, 1) >= 0.85:
+                boxes.append((area, cv2.boxPoints(rect).astype(np.float32)))
+        if len(boxes) >= 2:
+            break
+    if len(boxes) < 2:
+        # Respaldo: diferencia contra el color de fondo (mediana del borde de la foto). Una erosión rompe
+        # uniones delgadas entre tarjetas que casi se tocan (capturas con frente y reverso apilados).
+        border = np.concatenate([small[0], small[-1], small[:, 0], small[:, -1]])
+        bg = np.median(border, axis=0)
+        mask = (np.abs(small.astype(np.int16) - bg).max(axis=2) > 28).astype(np.uint8) * 255
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((11, 11), np.uint8), iterations=2)
+        mask = cv2.erode(mask, np.ones((9, 9), np.uint8), iterations=1)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        boxes = []
+        for contour in contours:
+            rect = cv2.minAreaRect(contour)
+            rw, rh = rect[1]
+            area = rw * rh
+            ratio = max(rw, rh) / max(min(rw, rh), 1.0)
+            if area >= total * 0.08 and 1.3 <= ratio <= 2.0 and cv2.contourArea(contour) / max(area, 1) >= 0.75:
+                (cx, cy), (rw, rh), ang = rect  # se compensa la erosión
+                boxes.append((area, cv2.boxPoints(((cx, cy), (rw + 9, rh + 9), ang)).astype(np.float32)))
+    boxes.sort(key=lambda b: -b[0])
+    chosen: list[np.ndarray] = []
+    for area, box in boxes:
+        x, y, bw, bh = cv2.boundingRect(box)
+        if all(_overlap((x, y, bw, bh), cv2.boundingRect(c)) < 0.2 for c in chosen):
+            chosen.append(box)
+        if len(chosen) == max_cards:
+            break
+    if len(chosen) < 2:
+        chosen = _split_stacked(small)
+    if len(chosen) < 2:
+        return []
+    areas = [cv2.contourArea(c) for c in chosen]
+    if min(areas) / max(areas) < 0.6:
+        return []
+    chosen.sort(key=lambda c: (float(c[:, 1].mean()), float(c[:, 0].mean())))  # arriba→abajo, izq→der
+    crops = []
+    for box in chosen:
+        quad = _order_corners(box) / scale
+        cw = int(max(np.linalg.norm(quad[2] - quad[3]), np.linalg.norm(quad[1] - quad[0])))
+        ch = int(max(np.linalg.norm(quad[1] - quad[2]), np.linalg.norm(quad[0] - quad[3])))
+        m = cv2.getPerspectiveTransform(quad, np.float32([[0, 0], [cw - 1, 0], [cw - 1, ch - 1], [0, ch - 1]]))
+        warped = cv2.warpPerspective(rgb, m, (cw, ch), flags=cv2.INTER_CUBIC)
+        if ch > cw:
+            warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
+        crops.append(Image.fromarray(warped))
+    return crops
+
+
+def _split_stacked(small: np.ndarray) -> list[np.ndarray]:
+    """Dos tarjetas que se tocan forman un solo bloque. Si el bloque mide como dos credenciales
+    apiladas (o lado a lado), se corta por la fila/columna central más parecida al fondo."""
+    border = np.concatenate([small[0], small[-1], small[:, 0], small[:, -1]])
+    bg = np.median(border, axis=0)
+    fg = (np.abs(small.astype(np.int16) - bg).max(axis=2) > 20).astype(np.uint8)
+    ys, xs = np.nonzero(fg)
+    if len(xs) < 100:
+        return []
+    x0, x1, y0, y1 = np.percentile(xs, 1), np.percentile(xs, 99), np.percentile(ys, 1), np.percentile(ys, 99)
+    bw, bh = x1 - x0, y1 - y0
+    for axis, length, other in ((0, bh, bw), (1, bw, bh)):  # 0: apiladas (corte horizontal), 1: lado a lado
+        if not 1.3 <= other / max(length / 2, 1) <= 2.0:  # cada mitad debe tener proporción ID-1
+            continue
+        if axis == 0:
+            lo, hi = int(y0 + bh * 0.35), int(y0 + bh * 0.65)
+            profile = fg[lo:hi, int(x0):int(x1)].mean(axis=1)
+        else:
+            lo, hi = int(x0 + bw * 0.35), int(x0 + bw * 0.65)
+            profile = fg[int(y0):int(y1), lo:hi].mean(axis=0)
+        if profile.size == 0:
+            continue
+        cut = int(np.argmin(profile))
+        if profile[cut] > 0.45:  # no hay franja de fondo: es una sola pieza
+            continue
+        cut += lo
+        if axis == 0:
+            parts = [(x0, y0, x1, cut), (x0, cut, x1, y1)]
+        else:
+            parts = [(x0, y0, cut, y1), (cut, y0, x1, y1)]
+        # Una credencial es una superficie impresa casi completa; una hoja (contrato, acta) es
+        # mayormente fondo con texto. Se exige superficie "llena" en ambas mitades.
+        if any(fg[int(b):int(d), int(a):int(c)].mean() < 0.35 for a, b, c, d in parts):
+            continue
+        return [np.float32([[a, b], [c, b], [c, d], [a, d]]) for a, b, c, d in parts]
+    return []
+
+
+def _overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    return inter / max(min(aw * ah, bw * bh), 1)
 
 
 def upscale_if_small(image: Image.Image, min_width: int = 1200) -> Image.Image:

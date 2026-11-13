@@ -216,7 +216,8 @@ def _decode_entry(file, index: int, is_sample: bool) -> tuple[str, bytes]:
 
 def _attach_metadata(item: dict, file: dict, is_sample: bool) -> None:
     for key in ("grupo", "cara"):
-        if isinstance(file.get(key), str):
+        # Una foto con varias tarjetas ya trae grupo/cara propios; no se sobrescriben.
+        if isinstance(file.get(key), str) and "origen_multitarjeta" not in item:
             item[key] = file[key][:64]
     item["confirmada"] = file.get("confirmada") is True
     item["muestra_ficticia"] = is_sample
@@ -241,9 +242,9 @@ async def process(request: Request):
         try:
             name, data = _decode_entry(file, index, is_sample)
             digest = hashlib.sha256(data).hexdigest()
-            item = worker.process(data, name)
-            _attach_metadata(item, file, is_sample)
-            results.append(item)
+            for item in worker.process_many(data, name):
+                _attach_metadata(item, file, is_sample)
+                results.append(item)
         except (InvalidImage, ValueError, KeyError, binascii.Error, RuntimeError) as exc:
             results.append({"archivo": _name(file, index), "estado": "error", "clasificacion": "error",
                             "mensaje": str(exc), "sha256": digest,
@@ -276,19 +277,19 @@ async def process_stream(request: Request):
                     event["indice"] = index
                     loop.call_soon_threadsafe(event_queue.put_nowait, event)
 
-                task = asyncio.create_task(asyncio.to_thread(worker.process, data, name, notify))
+                task = asyncio.create_task(asyncio.to_thread(worker.process_many, data, name, notify))
                 while not task.done() or not event_queue.empty():
                     try:
                         event = await asyncio.wait_for(event_queue.get(), timeout=.15)
                         yield line({"tipo": "etapa", **event})
                     except asyncio.TimeoutError:
                         continue
-                item = await task
-                _attach_metadata(item, file, is_sample)
-                results.append(item)
-                yield line({"tipo": "archivo_completado", "indice": index, "archivo": name,
-                            "estado": item["estado"], "clasificacion": item["clasificacion"],
-                            "duracion_ms": item["duracion_ms"]})
+                for item in await task:
+                    _attach_metadata(item, file, is_sample)
+                    results.append(item)
+                    yield line({"tipo": "archivo_completado", "indice": index, "archivo": item["archivo"],
+                                "estado": item["estado"], "clasificacion": item["clasificacion"],
+                                "duracion_ms": item["duracion_ms"]})
             except (InvalidImage, ValueError, KeyError, binascii.Error, RuntimeError) as exc:
                 item = {"archivo": _name(file, index), "estado": "error", "clasificacion": "error",
                         "mensaje": str(exc), "sha256": digest, "persistencia": {"estado": "no_ejecutada"}}

@@ -43,6 +43,22 @@ def engine() -> str | None:
     return None
 
 
+def fusion_available() -> bool:
+    """Fusión de motores: con Tesseract como motor principal, RapidOCR aporta una lectura adicional
+    al consenso de campos (se desactiva con OCR_FUSION=0). Medido en la evaluación privada V6."""
+    if os.getenv("OCR_FUSION", "1") == "0" or engine() != "tesseract":
+        return False
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def run_secondary(image: Image.Image) -> OcrResult:
+    return _run_rapidocr(image)
+
+
 def available() -> bool:
     return engine() is not None
 

@@ -1,5 +1,16 @@
 # Reporte de pruebas V5
 
+## V6 (rama `feature/adea-v6-ocr-calibration`, 2026-11-13)
+
+- Suite local completa: **99 aprobadas, 6 omitidas** (las 6 requieren `ADEA_REAL_DB=1`).
+- Integración real con `ADEA_REAL_DB=1`: **6/6** contra Oracle AI Database Free y SQL Server LocalDB. Antes de esta corrida el usuario de LocalDB estaba huérfano (su SID no coincidía con el login), y se revinculó con `ALTER USER … WITH LOGIN` sin borrar registros.
+- Benchmark sintético `scripts/evaluate_v5.py`: clasificación 100 %, CURP 100 %, clave 100 %, 0 falsos positivos y 0 falsos negativos (sin regresión). El tiempo medio pasó de 3.8 s a ≈5.0 s por la segunda lectura condicional.
+- Nuevas pruebas: separación de frente y reverso en una sola foto (con espacio y con contacto), no división de documentos individuales ni del contrato, localización por color sobre fondo saturado, fusión de motores que rellena sin sobrescribir y limpieza de renglones de nombre.
+- La prueba XSS se actualizó: el marcado ya no llega a los campos de nombre porque estos solo aceptan palabras en mayúsculas, y se sigue comprobando que el texto libre del domicilio se conserva como cadena inerte.
+- Evaluación con fotografías reales: ver `V5_OCR_EVALUATION.md` § V6 (métricas agregadas, sin datos personales).
+- Cámara física: sigue pendiente; solo hay emulación.
+
+
 Fecha: 2026-11-13. Rama: `feature/adea-v5-rescue`.
 
 ## Resultados

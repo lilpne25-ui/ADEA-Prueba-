@@ -136,3 +136,38 @@ def test_back_side_reads_codes_and_mrz():
 def test_comparison_of_strategies_is_reported():
     t = run(base())["tecnicas"]
     assert len(t["estrategias_comparadas"]) >= 3 and t["estrategia_elegida"] in {e["estrategia"] for e in t["estrategias_comparadas"]}
+
+
+# ---- V6: separación de varias tarjetas, localización por color y fusión de motores --------------
+def _stacked(gap: int, bg=(235, 235, 235)) -> Image.Image:
+    from app.samples import synthetic_back
+    front = base()
+    back = Image.open(io.BytesIO(synthetic_back())).convert("RGB").resize(front.size)
+    canvas = Image.new("RGB", (front.width + 120, front.height * 2 + gap + 160), bg)
+    canvas.paste(front, (60, 80))
+    canvas.paste(back, (60, 80 + front.height + gap))
+    return canvas
+
+
+@pytest.mark.parametrize("gap", [40, 4])
+def test_front_and_back_in_one_photo_are_split_and_paired(gap):
+    items = Processor().process_many(png(_stacked(gap)), "captura.png")
+    assert len(items) == 2
+    caras = sorted(i["cara"] for i in items)
+    assert caras == ["back", "front"] and items[0]["grupo"] == items[1]["grupo"]
+    front = next(i for i in items if i["cara"] == "front")
+    assert front["clasificacion"] == "ine" and front["campos"]["curp"]["valor"] == SYNTH["curp"]
+
+
+def test_single_documents_are_not_split():
+    from app import imaging as im
+    for name in SAMPLE_NAMES:
+        assert im.card_regions(im.load(sample_bytes(name))) == [], name
+
+
+def test_card_held_on_colored_background_is_localized_by_color():
+    card = base().resize((560, 350))
+    scene = Image.new("RGB", (720, 1280), (190, 120, 90))  # tono piel/madera saturado
+    scene.paste(card, (80, 470))
+    loc = imaging.locate_card(scene)
+    assert loc.found and 1.4 < loc.image.width / loc.image.height < 1.8

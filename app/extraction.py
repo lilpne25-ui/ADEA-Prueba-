@@ -132,6 +132,60 @@ def _lines_after(lines: list[str], label_re: str, count: int, stoppers: str) -> 
     return []
 
 
+_NAME_PARTICLES = {"DE", "DEL", "LA", "LAS", "LOS", "Y", "SAN", "MC", "MAC", "VAN", "VON", "DA", "DI"}
+_SIDE_LABELS = re.compile(r"\bSEXO\b\s*[HM]?\b|\bFECHA\s*DE\s*NACIMIENTO\b.*$")
+
+
+def _clean_name_line(raw: str) -> str:
+    """Conserva solo tokens con forma de nombre impreso en la credencial.
+
+    En la INE los nombres van en MAYÚSCULAS. El OCR agrega a la derecha restos de la fotografía
+    fantasma y de la etiqueta «SEXO H/M»; esos restos suelen traer minúsculas, dígitos o símbolos.
+    Se descartan tokens que no sean palabras en mayúsculas de ≥2 letras (salvo partículas)."""
+    line = _SIDE_LABELS.sub(" ", raw)
+    kept = []
+    for token in re.split(r"\s+", line.strip()):
+        bare = token.strip(".,:;|_-'\"")
+        if not bare:
+            continue
+        if bare.isupper() and re.fullmatch(r"[A-ZÁÉÍÓÚÑÜ]{2,}", bare):
+            kept.append(plain(bare))
+        elif plain(bare) in _NAME_PARTICLES and bare.isupper():
+            kept.append(plain(bare))
+        elif kept:
+            break  # el primer token con forma de ruido marca el fin del nombre en ese renglón
+    while kept and kept[-1] in _NAME_PARTICLES - {"Y"}:
+        kept.pop()
+    return " ".join(kept)
+
+
+def _name_blocks(texts: list[str]) -> list[list[str]]:
+    """Renglones de nombre por variante: tras la etiqueta NOMBRE y antes de DOMICILIO/CLAVE/CURP."""
+    blocks = []
+    for text in texts:
+        raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for i, line in enumerate(raw_lines):
+            m = re.search(r"\bNOMBRE\b", plain(line))
+            if not m:
+                continue
+            block = []
+            rest = _clean_name_line(line[m.end():]) if len(line) == len(plain(line)) else ""
+            if rest and not re.search(_STOP, rest):
+                block.append(rest)
+            for nxt in raw_lines[i + 1:i + 6]:
+                if re.search(_STOP, plain(nxt)):
+                    break
+                cleaned = _clean_name_line(nxt)
+                if cleaned:
+                    block.append(cleaned)
+                if len(block) >= 3:
+                    break
+            if block:
+                blocks.append(block)
+            break
+    return blocks
+
+
 def _blocks_after(texts: list[str], label_re: str, count: int, stoppers: str) -> list[list[str]]:
     blocks = []
     for text in texts:
@@ -227,7 +281,7 @@ def extract(texts: list[str], mrz_lines: list[str] | None = None,
     elector = _pick_identifier(texts, r"CLAVE\s*DE\s*ELECTOR", _ELECTOR_SHAPE, v.ELECTOR_RE, v.validate_elector)
 
     # --- Nombre: en la credencial cada elemento suele ir en su propia línea (paterno/materno/nombres).
-    name_blocks = _blocks_after(texts, r"\bNOMBRE\b", 3, _STOP)
+    name_blocks = _name_blocks(texts)
     name_lines = name_blocks[0] if name_blocks else []
     paterno = materno = nombres = None
     name_alerts: list[str] = []
@@ -368,6 +422,35 @@ def _mrz_positional(line: str, shape: str) -> tuple[str, list[str]]:
             notes.append(f"pos {i + 1}: '{ch}'→'{new}'")
         out.append(new)
     return "".join(out) + line[len(shape):], notes
+
+
+def merge_secondary(primary: dict[str, dict[str, Any]], secondary: dict[str, dict[str, Any]]) -> None:
+    """Fusión campo a campo con un segundo motor OCR (RapidOCR) sin alterar lo que el primario ya leyó.
+
+    - Primario sin valor y secundario con valor ⇒ se usa el secundario y se registra la fuente.
+    - Identificadores: solo se toman si el secundario los valida por formato.
+    - Ambos con el mismo valor ⇒ se anota la coincidencia como evidencia adicional.
+    Una discrepancia nunca sobrescribe al primario: se registra como alerta para revisión humana."""
+    for key, sec in secondary.items():
+        prim = primary.get(key)
+        if prim is None or not sec.get("valor"):
+            continue
+        if key in ("curp", "clave_elector") and sec.get("estado") != v.VALIDADO:
+            continue
+        if prim.get("valor") is None:
+            sec = dict(sec)
+            sec["fuente"] = "rapidocr"
+            sec["evidencia"] = "Recuperado por el motor OCR secundario (RapidOCR); Tesseract no lo leyó."
+            primary[key] = sec
+        elif plain(prim["valor"]).replace(" ", "") == plain(sec["valor"]).replace(" ", ""):
+            prim["evidencia"] = ((prim.get("evidencia") or "") + " Coinciden Tesseract y RapidOCR.").strip()
+            if key == "curp" and prim.get("estado") == v.PENDIENTE and sec.get("estado") == v.VALIDADO                     and prim.get("valor") == sec.get("valor") and not prim.get("alertas", [])[1:]:
+                # La lectura exacta del segundo motor confirma la hipótesis O/0 del primero.
+                prim["estado"] = v.VALIDADO
+                prim["alertas"] = []
+                prim["evidencia"] += " La corrección de la posición 17 coincide con la lectura sin corrección de RapidOCR."
+        else:
+            prim.setdefault("alertas", []).append("Los dos motores OCR leyeron valores distintos: revisar.")
 
 
 def normalize_mrz_lines(text: str, corrections: list[str] | None = None) -> list[str]:

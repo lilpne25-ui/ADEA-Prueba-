@@ -30,7 +30,8 @@ def match_side(filename: str) -> tuple[str, str] | None:
 def _key(item: dict[str, Any]) -> tuple[str, str, str] | None:
     group, side = item.get("grupo"), item.get("cara")
     if group and side in ("front", "back"):
-        return f"G:{group}", side, "explicita"
+        origin = "misma_fotografia" if str(group).startswith("foto:") else "explicita"
+        return f"G:{group}", side, origin
     guessed = match_side(item.get("archivo", ""))
     return (f"N:{guessed[0]}", guessed[1], "nombre_de_archivo") if guessed else None
 
@@ -45,7 +46,7 @@ def link_sides(items: list[dict[str, Any]]) -> None:
         if "front" not in group or "back" not in group:
             continue
         (front, origin_f), (back, origin_b) = group["front"], group["back"]
-        origin = "explicita" if origin_f == origin_b == "explicita" else "nombre_de_archivo"
+        origin = origin_f if origin_f == origin_b else "nombre_de_archivo"
         confirmed = bool(front.get("confirmada") and back.get("confirmada"))
         front["reverso"] = {"archivo": back["archivo"], "mrz": back["mrz"], "codigos": back["codigos"]}
         front["consistencia"] = v.cross_checks(front["campos"], back["mrz"])

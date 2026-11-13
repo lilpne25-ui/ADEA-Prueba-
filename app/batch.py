@@ -30,10 +30,10 @@ def run_batch(folder: Path, include_pii: bool = False) -> dict:
     for p in paths:
         name = p.relative_to(folder).as_posix()
         try:
-            item = process.process(p.read_bytes(), name)
-            item.pop("preview_original", None)
-            item.pop("preview_limpieza", None)
-            output.append(item)
+            for item in process.process_many(p.read_bytes(), name):
+                item.pop("preview_original", None)
+                item.pop("preview_limpieza", None)
+                output.append(item)
         except (InvalidImage, ValueError, RuntimeError, OSError) as exc:
             output.append({"archivo": name, "estado": "error", "clasificacion": "error", "mensaje": str(exc),
                            "persistencia": {"estado": "no_ejecutada"}})

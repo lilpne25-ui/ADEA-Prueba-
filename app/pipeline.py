@@ -190,7 +190,8 @@ class Processor:
                     return best[1], best[2]
         return best[1], best[2]
 
-    def process(self, data: bytes, filename: str = "imagen.jpg", on_event: EventFn | None = None) -> dict[str, Any]:
+    def process(self, data: bytes, filename: str = "imagen.jpg", on_event: EventFn | None = None,
+                *, assume_card: bool = False) -> dict[str, Any]:
         def emit(stage: str, message: str, **details: Any) -> None:
             if on_event:
                 on_event({"etapa": stage, "archivo": filename[:128], "mensaje": message, **details})
@@ -200,7 +201,13 @@ class Processor:
         original = imaging.load(data)
         original_quality = imaging.visual_features(original)
         emit("deteccion_documental", "Buscando contorno ID-1 y perspectiva")
-        loc = imaging.locate_card(original)
+        if assume_card:
+            # Recorte ya enderezado por `card_regions`: volver a buscar un contorno dentro de la
+            # tarjeta encontraría sub-rectángulos (foto, recuadros) y destruiría el documento.
+            loc = imaging.Localization(original, True, True, True,
+                                       ["Tarjeta separada de una foto con varias credenciales; perspectiva ya corregida."])
+        else:
+            loc = imaging.locate_card(original)
         card = loc.image
         visual = imaging.visual_features(card)
         emit("localizacion_roi", "Tarjeta localizada" if loc.found else "Sin contorno confiable; se analizará la imagen completa",
@@ -258,6 +265,13 @@ class Processor:
 
         ordered = [best_res.text] + [r.text for n, (_, r) in reads.items() if n != best_name]
         ordered += [result.text for result in context_reads]
+        secondary_text = None
+        if ocr_engine.fusion_available() and self._needs_secondary(ordered):
+            try:
+                secondary_text = ocr_engine.run_secondary(best_img).text
+            except Exception:  # noqa: BLE001 - la fusión es opcional; nunca rompe el proceso
+                secondary_text = None
+        fusion_used = bool(secondary_text)
 
         codes = decode_codes(card) or decode_codes(original)
 
@@ -267,8 +281,29 @@ class Processor:
             alt_lines, alt_notes = self._read_mrz(original, try_rotations=bool(codes))
             if len(alt_lines) == 3:
                 mrz_lines, mrz_notes = alt_lines, alt_notes
+
+        def mrz_score(lines: list[str]) -> int:
+            parsed = v.parse_mrz(lines)
+            return (3 if parsed["lineas_validas"] else 0) + sum(c["coincide"] for c in parsed["verificadores"])
+
+        mrz_source = ocr_engine.engine()
+        if codes and mrz_score(mrz_lines) < 6 and ocr_engine.fusion_available():
+            # Reverso probable (hay QR) y MRZ incompleta: segunda lectura con RapidOCR. Se adopta solo si
+            # mejora la puntuación medible (estructura TD1 + dígitos verificadores coincidentes).
+            try:
+                for candidate_img in (card, card.rotate(180, expand=True)):
+                    sec_notes: list[str] = []
+                    sec_lines = extraction.normalize_mrz_lines(ocr_engine.run_secondary(candidate_img).text, sec_notes)
+                    if mrz_score(sec_lines) > mrz_score(mrz_lines):
+                        mrz_lines, mrz_notes, mrz_source = sec_lines, sec_notes, "rapidocr"
+                    if mrz_score(mrz_lines) >= 6:
+                        break
+            except Exception:  # noqa: BLE001 - lectura opcional
+                pass
         emit("extraccion", "Extrayendo campos, MRZ y códigos")
         info = extraction.extract(ordered, mrz_lines, codes)
+        if secondary_text:
+            extraction.merge_secondary(info["campos"], extraction.extract([secondary_text], None, [])["campos"])
         _annotate_fields(info["campos"], best_res, best_name)
         if mrz_notes and info["mrz"].get("lineas"):
             info["mrz"]["correcciones_ocr"] = mrz_notes
@@ -304,10 +339,46 @@ class Processor:
                 if ocr_engine.engine() == "tesseract" else "es/en (PP-OCR)",
                 "opencv": cv2 is not None, "qr_pdf417": zxingcpp is not None,
                 "caracteristicas_visuales": visual, "calidad_entrada": original_quality,
+                "fusion_ocr": "tesseract+rapidocr" if fusion_used else None, "motor_mrz": mrz_source,
             },
             "duracion_ms": round((time.monotonic() - started) * 1000),
             "persistencia": {"estado": "pendiente"},
         }
+
+    @staticmethod
+    def _needs_secondary(texts: list[str]) -> bool:
+        """La segunda lectura (RapidOCR) cuesta 2–4 s: solo se ejecuta si la extracción primaria deja
+        campos clave sin leer o identificadores sin validar por formato."""
+        campos = extraction.extract(texts, None, [])["campos"]
+        keys = ("curp", "clave_elector", "apellido_paterno", "apellido_materno", "nombres", "calle",
+                "numero_exterior", "colonia", "codigo_postal", "municipio_domicilio", "seccion", "vigencia")
+        return any(campos[k]["valor"] is None for k in keys) or \
+            any(campos[k]["estado"] != v.VALIDADO for k in ("curp", "clave_elector"))
+
+    def process_many(self, data: bytes, filename: str = "imagen.jpg",
+                     on_event: EventFn | None = None) -> list[dict[str, Any]]:
+        """Procesa una foto que puede contener varias credenciales (p. ej. frente y reverso juntos).
+
+        Si `imaging.card_regions` encuentra ≥2 tarjetas separables, cada una se procesa como documento
+        propio; ambas quedan en el mismo grupo para asociarse como frente/reverso de forma TENTATIVA."""
+        crops = imaging.card_regions(imaging.load(data))
+        if len(crops) < 2:
+            return [self.process(data, filename, on_event)]
+        origin_sha = hashlib.sha256(data).hexdigest()
+        results = []
+        for k, crop in enumerate(crops, 1):
+            buf = io.BytesIO()
+            crop.save(buf, "PNG")
+            item = self.process(buf.getvalue(), f"{filename[:100]} [tarjeta {k}/{len(crops)}]", on_event,
+                                assume_card=True)
+            item["origen_multitarjeta"] = {"archivo": filename[:128], "sha256": origin_sha,
+                                           "tarjeta": k, "total": len(crops)}
+            is_back = bool(item.get("mrz", {}).get("lineas_validas")) or (
+                bool(item.get("codigos")) and not item["campos"]["curp"]["valor"])
+            item["grupo"] = f"foto:{origin_sha[:12]}"
+            item["cara"] = "back" if is_back else "front"
+            results.append(item)
+        return results
 
 
 # ---------------------------------------------------------------------------------------------
