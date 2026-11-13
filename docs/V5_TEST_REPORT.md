@@ -23,7 +23,7 @@ Fecha: 2026-11-13. Rama: `feature/adea-v5-rescue`.
 | Lote heterogéneo | Aprobado | avance real por archivo, resultado consistente |
 | Producción V4 limpia | Reproducido | OCR real, pero sin streaming; MRZ en revisión |
 | V5 Preview | Aprobado | 38 eventos NDJSON, 32 etapas y cuatro estados esperados |
-| V5 Production | Pendiente | se promueve únicamente después de CI/PR |
+| V5 Production | Aprobado | RapidOCR operativo; 38 eventos, 32 etapas y recorrido móvil limpio |
 | Cámara física | Pendiente | emulación no sustituye iPhone/Android real |
 
 ## Bases reales
@@ -35,3 +35,5 @@ Oracle `FREEPDB1`: conectado; SP de 17 argumentos verificado; commit, duplicado 
 No hay exactitud medida con INE reales. La instalación PWA y cámara requieren dispositivo físico. Los rangos de dependencias y advertencias deprecadas existentes deben vigilarse, pero no bloquearon el recorrido principal.
 
 Preview verificado: `https://adea-ine-control-mw5dchvyh-vlux-s-projects.vercel.app`. El bundle de servidor quedó en 347.04 MB; Vercel aplicó optimización, pero el tamaño debe seguirse como riesgo operativo.
+
+Producción verificada: `https://adea-ine-control.vercel.app` (`dpl_6ZiFGyNfNiDcs2Kb8GicSF3eafUN`). Salud, lote ficticio completo, bloqueo 403 y consola móvil sin errores aprobados después de integrar la PR #2.
