@@ -87,3 +87,21 @@ def test_corporate_requires_token(monkeypatch):
 
 def test_samples_endpoint():
     assert len(client.get("/api/samples").json()["muestras"]) == len(SAMPLE_NAMES)
+
+
+def test_pwa_routes():
+    m = client.get("/manifest.webmanifest")
+    assert m.status_code == 200 and m.headers["content-type"].startswith("application/manifest+json")
+    assert m.json()["display"] == "standalone" and len(m.json()["icons"]) >= 2
+    sw = client.get("/sw.js")
+    assert sw.status_code == 200 and "/api/" in sw.text  # el SW excluye la API de la caché
+
+
+def test_pairing_requires_token_and_is_hidden_in_cloud(monkeypatch):
+    monkeypatch.setenv("APP_MODE", "corporate")
+    monkeypatch.setenv("APP_ACCESS_TOKEN", "tok")
+    assert client.get("/api/pairing").status_code == 401
+    ok = client.get("/api/pairing", headers={"X-Access-Token": "tok"}).json()
+    assert "tok" not in ok["url_visible"] and ok["qr"].startswith("data:image/png")
+    monkeypatch.setenv("VERCEL", "1")
+    assert client.get("/api/pairing", headers={"X-Access-Token": "tok"}).status_code == 404

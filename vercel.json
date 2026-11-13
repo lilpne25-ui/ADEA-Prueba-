@@ -1,3 +1,9 @@
 {
-  "framework": "container"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "index.py": {
+      "maxDuration": 120,
+      "includeFiles": "{public,vendor}/**"
+    }
+  }
 }

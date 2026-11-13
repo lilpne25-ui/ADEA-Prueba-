@@ -28,3 +28,5 @@ certs/
 *.zip
 # Marca de terceros: no se publica en el repositorio público
 public/adea-logo-000.png
+
+.vercel

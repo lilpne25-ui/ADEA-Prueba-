@@ -1,60 +1,90 @@
-# INE Control · Prueba técnica Python (V3.0)
+# INE Control · Mesa de control documental en Python (V4.0)
 
-**Novedades V3.0:** Oracle AI Database Free (contenedor oficial) y SQL Server LocalDB **instalados, configurados y probados con integración real** (6/6), pestaña **Infraestructura** (estado, última verificación, expedientes, eventos de auditoría, errores recientes), **cámara con encuadre ID-1** e indicador de luz/nitidez en vivo con procesamiento al capturar, y credenciales locales protegidas en `.env.local`. Ver `DEPLOYMENT_GUIDE.md §1b` y `TEST_REPORT.md`.
+> **Proyecto independiente desarrollado como prueba técnica. No constituye software oficial de ADEA.**
 
-Mesa de control de expedientes de onboarding: recibe un lote heterogéneo de imágenes, separa las credenciales INE/IFE, mejora la imagen, extrae datos estructurados, los valida y deja preparado el registro en **Oracle** (`SP_REGISTRAR_EXPEDIENTE`) y la auditoría en **SQL Server**.
+Demo pública (solo documentos ficticios): **https://adea-ine-control.vercel.app**
 
-> Demostración técnica **independiente** elaborada para el examen de desarrollador Python. No es software oficial ni autorizado por ADEA. El logotipo se extrajo del PDF del examen.
+| Escritorio | Móvil |
+|---|---|
+| ![Laboratorio en escritorio](docs/screenshots/escritorio-1440.png) | ![Laboratorio en móvil](docs/screenshots/movil-390.png) |
 
-## Qué hace (y qué no)
+## 1. Presentación
+INE Control recibe un lote heterogéneo de imágenes, separa las credenciales INE/IFE, mejora la imagen, extrae sus campos, los valida y registra el expediente en **Oracle** (`SP_REGISTRAR_EXPEDIENTE`) con auditoría en **SQL Server**. Todo el procesamiento está en Python; la interfaz web solo presenta resultados.
 
-| Etapa | Implementación | Verificado con |
+## 2. Problema planteado
+Una mesa de control de onboarding recibe carpetas mezcladas (INE, licencias, contratos, escrituras, fotos con ruido). El examen pide un proceso batch en Python que separe de forma autónoma las credenciales INE, aplique limpieza visual, extraiga datos estructurados y los persista en Oracle y SQL Server.
+
+## 3. Objetivos del examen y cómo se cubren
+| Requisito | Implementación | Evidencia |
 |---|---|---|
-| Clasificación `ine / no_ine / revision / error` | Híbrida: texto (emisor, leyenda, etiquetas, MRZ, QR) + visual (contorno ID-1, bloque de foto). **No** es un modelo entrenado. Una CURP sola nunca basta. | Pruebas automáticas con documentos sintéticos |
-| Visión | OpenCV: Canny → contornos → cuadrilátero → perspectiva; 4 estrategias de preprocesamiento comparadas por calidad de lectura medida; rotación solo si aparece vocabulario de credencial | Pruebas con imágenes degradadas |
-| OCR | Tesseract local (`spa+eng`), confianza por palabra | Pruebas reales con Tesseract 5.4 |
-| Extracción | CURP, clave de elector, nombre (3 partes), domicilio, datos electorales, MRZ (3 líneas), QR y PDF417 (ZXing) | Muestras sintéticas |
-| Validación | Estados `DETECTADO / VALIDADO_POR_FORMATO / PENDIENTE_CONFIRMACION / NO_DETECTADO / INVALIDO`; fecha, entidad y dígito verificador de la CURP; dígitos verificadores MRZ; consistencia frente-reverso | Pruebas unitarias |
-| Persistencia | Adaptadores Oracle (python-oracledb) y SQL Server (pyodbc) separados del OCR | **Solo con adaptadores simulados**; sin credenciales reales no se simula ningún INSERT |
+| Separar solo INE | Clasificador híbrido de reglas (`app/classification.py`) | Pruebas negativas, incluido un contrato con CURP válida |
+| Limpieza visual | OpenCV: contornos, perspectiva, CLAHE, denoise, binarización (`app/imaging.py`) | `tests/test_ocr_real.py` |
+| CURP / clave de elector (regex del examen) | `app/validation.py` + dígito verificador, fecha y entidad | `tests/test_validation.py` |
+| Nombre, domicilio, datos electorales | `app/extraction.py` | `tests/test_pipeline.py` |
+| MRZ 3 líneas, QR, PDF417 | MRZ TD1 con dígitos verificadores; ZXing-cpp | `tests/test_ocr_real.py` |
+| Oracle `SP_REGISTRAR_EXPEDIENTE` + SQL Server | `app/persistence.py` (python-oracledb, pyodbc) | `tests/test_integration_real.py` (bases reales locales) |
 
-**Nunca** se afirma autenticidad: un formato correcto solo significa coherencia sintáctica.
-
-## Inicio rápido en Windows
-
-1. Instala Python 3.12+ y Tesseract: `winget install UB-Mannheim.TesseractOCR`.
-2. Descomprime el ZIP y haz doble clic en **`INICIAR_WINDOWS.bat`**. Crea el entorno, instala dependencias, detecta Tesseract, evita servidores duplicados y abre `http://localhost:8000`.
-3. Pulsa **Lote de muestra ficticio → Ejecutar procesamiento**.
-4. Teléfono (misma Wi‑Fi confiable): abre `http://IP-DE-TU-PC:8000` (el BAT imprime la IP). No abras el puerto a Internet.
-
-Manual: `.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`.
-Español para el OCR: `tessdata\spa.traineddata` (incluido en esta versión) o define `OCR_LANG=eng`.
-
-## Procesar una carpeta (batch)
-
-```powershell
-.venv\Scripts\python.exe -m app.batch --input .\imagenes --output .\resumen_demo.json
+## 4. Arquitectura
 ```
-El JSON por defecto **no** contiene datos de identidad ni imágenes (`--include-pii` solo en entorno autorizado).
-
-## Pruebas
-
-```powershell
-.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.venv\Scripts\python.exe -m pytest -q
+Navegador / PWA ──JSON──▶ FastAPI (app/main.py)
+                            ├─ imaging (OpenCV) ─▶ ocr (Tesseract | RapidOCR) ─▶ extraction ─▶ validation
+                            ├─ classification · pairing (frente/reverso)
+                            └─ persistence ─▶ Oracle (SP) · SQL Server (auditoría sin datos personales)
 ```
-Resultados y límites en [TEST_REPORT.md](TEST_REPORT.md).
+Módulos y decisiones: [ARQUITECTURA.md](ARQUITECTURA.md) · [docs/V4_TECHNICAL_HANDOFF.md](docs/V4_TECHNICAL_HANDOFF.md).
 
-## Documentación
+## 5. Tecnologías
+Python 3.12+, FastAPI, Uvicorn, OpenCV, NumPy, Pillow, Tesseract 5 (local), RapidOCR/ONNX Runtime (nube), ZXing-cpp, python-oracledb, pyodbc, HTML/CSS/JS sin framework, PWA, GitHub Actions, Vercel.
 
-[MANUAL_USUARIO.md](MANUAL_USUARIO.md) · [MANUAL_TECNICO.md](MANUAL_TECNICO.md) · [ARQUITECTURA.md](ARQUITECTURA.md) · [TEST_REPORT.md](TEST_REPORT.md) · [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) · API Swagger en `/api/docs`.
+## 6. Flujo de clasificación
+Señales **fuertes** (emisor INE/IFE, leyenda «Credencial para votar», MRZ con emisor MEX, código que referencia al INE), **estructurales** (≥3 etiquetas electorales, CURP/clave con formato, dígitos MRZ, códigos, contorno ID‑1, bloque de foto) y **negativas** (leyendas de contrato, acta, escritura, licencia). INE = ≥1 fuerte + ≥2 estructurales sin negativas; evidencia parcial = revisión. No es un modelo entrenado y una CURP sola nunca basta.
 
-## Privacidad
+## 7. Procesamiento visual
+Canny → contornos → cuadrilátero con proporción ID‑1 → `warpPerspective`. Se comparan varias estrategias (original, contraste CLAHE, denoise, binarización adaptativa) y se elige la de mejor lectura medida (confianza OCR × palabras). Si no hay tarjeta localizable, se informa: nunca se simula una corrección.
 
-- No se incluyen fotografías ni datos personales reales; todo demo/prueba es sintético y lleva leyenda de invalidez.
-- Las imágenes se procesan en memoria; no hay OCR en la nube ni envío a terceros.
-- La versión pública (`VERCEL=1` o `ENABLE_REAL_UPLOADS=false`) solo acepta las muestras integradas.
-- Credenciales solo por variables de entorno (`.env.example`).
+## 8. Extracción OCR
+- **Local (Windows):** Tesseract 5 (`spa+eng`).
+- **Nube (Vercel):** RapidOCR (modelos PP‑OCR en ONNX, vendorizado en `vendor/`, Apache‑2.0) porque Vercel no permite instalar binarios del sistema. **Verificado en producción** con las muestras ficticias.
+- Las correcciones de caracteres (O→0, I→1…) se registran aparte y dejan el campo «pendiente de confirmación».
 
-## QUÉ FUNCIONA REALMENTE / QUÉ QUEDA PENDIENTE
+## 9. Validación de campos
+Estados: `DETECTADO`, `VALIDADO_POR_FORMATO`, `PENDIENTE_CONFIRMACION`, `NO_DETECTADO`, `INVALIDO`. Validación cruzada CURP ↔ clave de elector ↔ MRZ. Un formato correcto **no** prueba autenticidad.
 
-Ver la sección final de [TEST_REPORT.md](TEST_REPORT.md).
+## 10. Oracle y SQL Server
+- Oracle AI Database Free (imagen oficial en Docker) y SQL Server 2025 LocalDB **instalados y probados en la PC de desarrollo** (6/6 pruebas reales: registro, auditoría, lote, fallos controlados, reinicio).
+- Sin credenciales, la app muestra **NO CONFIGURADO** y no simula escrituras. «Conectado y validado» solo tras una consulta real.
+- La demo pública **no** se conecta a esas bases (no se exponen a Internet).
+
+## 11. Experiencia móvil
+Diseño responsive real (verificado por emulación a 390, 430, 768 y 1440 px), botones grandes, cámara con marco ID‑1 e indicador de luz/nitidez, emparejamiento por **QR** con HTTPS local (puerto 8443) para usar la cámara del teléfono en la red privada.
+
+## 12. PWA
+Manifiesto + service worker (solo cachea el armazón estático; nunca respuestas de `/api`). Registro del service worker verificado en la URL de Vercel.
+
+## 13. Seguridad
+Repositorio sin secretos ni imágenes reales (auditado antes de cada push; `tests/test_security.py`), credenciales solo en `.env.local` (ignorado), SQL parametrizado, CSP estricta, escape de todo valor OCR, demo pública sin cargas reales (`403`), emparejamiento solo local y con token.
+
+## 14. Instalación local (Windows)
+```powershell
+winget install UB-Mannheim.TesseractOCR
+git clone https://github.com/lilpne25-ui/ADEA-Prueba-.git
+cd ADEA-Prueba-
+.\INICIAR_WINDOWS.bat
+```
+Bases locales opcionales: [DEPLOYMENT_GUIDE.md §1b](DEPLOYMENT_GUIDE.md).
+
+## 15. Pruebas
+`pytest -q` → 81 exitosas, 6 omitidas (integración con bases reales, se activan con `ADEA_REAL_DB=1`). CI en GitHub Actions ejecuta la suite con Tesseract y valida el motor RapidOCR. Detalle: [TEST_REPORT.md](TEST_REPORT.md).
+
+## 16. Limitaciones reales
+- Precisión con INE reales **no medida** (solo muestras sintéticas); en una prueba local con una credencial real se leyeron CURP y clave, pero no nombre, sección ni MRZ.
+- RapidOCR en la nube tarda ~5–10 s por imagen.
+- Cámara en vivo no probada en un teléfono físico.
+- Firma real de `SP_REGISTRAR_EXPEDIENTE` desconocida (contrato de demostración configurable).
+
+## 17. Enlaces
+- Demo: https://adea-ine-control.vercel.app
+- Manuales: [usuario](MANUAL_USUARIO.md) · [técnico](MANUAL_TECNICO.md) · [despliegue](DEPLOYMENT_GUIDE.md)
+
+## 18. Capturas
+Las capturas de arriba usan exclusivamente la interfaz pública sin documentos reales.

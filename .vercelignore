@@ -1,0 +1,16 @@
+.env
+.env.local
+.venv
+data
+certs
+tests
+docs
+tessdata
+sql
+scripts
+Dockerfile
+Dockerfile.vercel
+*.bat
+*.zip
+**/__pycache__
+.pytest_cache

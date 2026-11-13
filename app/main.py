@@ -48,6 +48,55 @@ def home():
     return FileResponse(PUBLIC / "index.html")
 
 
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def manifest():
+    return FileResponse(PUBLIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    # Servido en la raíz para que su alcance cubra toda la app.
+    return FileResponse(PUBLIC / "sw.js", media_type="text/javascript",
+                        headers={"Service-Worker-Allowed": "/"})
+
+
+@app.get("/api/pairing")
+def pairing(request: Request):
+    """Emparejamiento del celular: QR con la URL de red local (HTTPS si hay certificado) y el token en el
+    fragmento (#acceso=…, que el navegador no envía al servidor). Requiere estar autenticado."""
+    if os.getenv("VERCEL"):
+        raise HTTPException(404, "El emparejamiento solo existe en la instalación local")
+    authorize(request, force=mode() == "corporate")
+    import socket
+    from app.pipeline import zxingcpp as zx
+    ip = "127.0.0.1"
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("192.168.0.1", 9))  # no envía paquetes; solo elige la interfaz de la LAN
+        ip = probe.getsockname()[0]
+        probe.close()
+    except OSError:
+        pass
+    https = (config.ROOT / "certs" / "local.crt").exists()
+    url = f"{'https' if https else 'http'}://{ip}:{8443 if https else 8000}/"
+    token = os.getenv("APP_ACCESS_TOKEN")
+    if token:
+        url += f"#acceso={token}"
+    qr = None
+    if zx is not None:
+        import io
+        import numpy as np
+        from PIL import Image
+        arr = np.asarray(zx.write_barcode(zx.BarcodeFormat.QRCode, url))
+        img = Image.fromarray(arr, "L").resize((arr.shape[1] * 8, arr.shape[0] * 8), Image.NEAREST)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        qr = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    return {"url_visible": url.split("#")[0], "https": https, "qr": qr,
+            "aviso": None if https else "Sin HTTPS local la cámara en vivo no está disponible en el celular; "
+                                         "ejecuta scripts/make_local_cert.py para habilitarla."}
+
+
 def upload_enabled() -> bool:
     return config.upload_enabled()
 
@@ -60,7 +109,9 @@ def health():
         "servicio": "operativo", "modo": mode(), "corporativo_configurado": configured(),
         "carga_real_habilitada": upload_enabled(), "entorno": "nube" if cloud else "local",
         "persistencia": {"oracle": status["oracle"], "sqlserver": status["sqlserver"]},
-        "motores": {"tesseract": ocr_engine.available(), "idioma_ocr": config.ocr_lang() if ocr_engine.available() else None,
+        "motores": {"ocr": ocr_engine.engine(), "tesseract": ocr_engine.available(),
+                    "idioma_ocr": config.ocr_lang() if ocr_engine.engine() == "tesseract" else
+                    ("es/en (PP-OCR)" if ocr_engine.engine() else None),
                     "opencv": cv2 is not None, "zxing_qr_pdf417": zxingcpp is not None},
     }
 

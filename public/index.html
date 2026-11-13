@@ -7,6 +7,9 @@
   <meta name="description" content="Prueba técnica independiente: clasificación, visión, extracción y auditoría de credenciales INE con Python." />
   <title>INE Control · Prueba técnica Python</title>
   <link rel="icon" type="image/png" href="/static/icons/favicon-32.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/fixes.css" />
   <link rel="stylesheet" href="/static/extra.css" />
@@ -20,7 +23,7 @@
         <span class="brand-divider"></span>
         <span class="brand-label">Mesa de control documental <small>Prueba técnica independiente · Python</small></span>
       </div>
-      <div class="header-right"><span class="live-dot" id="live-dot"></span><span id="server-status">Conectando al motor Python</span><span class="build">V2.0</span></div>
+      <div class="header-right"><span class="live-dot" id="live-dot"></span><span id="server-status">Conectando al motor Python</span><span class="build">V4.0</span></div>
     </header>
 
     <div class="notice-bar" role="note">Proyecto independiente desarrollado como prueba técnica. No constituye software oficial de ADEA.</div>
@@ -55,6 +58,7 @@
             <input type="file" id="camera-input" accept="image/*" capture="environment" hidden />
             <div class="upload-actions">
               <button class="btn btn-subtle" id="camera-btn" type="button">Tomar fotografía <span>◉</span></button>
+              <button class="btn btn-subtle" id="pair-btn" type="button" hidden>Usar mi celular <span>⌁</span></button>
               <button class="btn btn-subtle" id="sample-set" type="button">Lote de muestra ficticio <span>→</span></button>
             </div>
             <div id="queue" class="queue" aria-live="polite"></div>
@@ -125,7 +129,7 @@
           </div>
           <div class="tech-panel tech-status"><h3>Estado del sistema</h3>
             <div class="service-row"><span>API backend</span><b id="health-api">Verificando</b></div>
-            <div class="service-row"><span>Tesseract OCR</span><b id="health-ocr">Verificando</b></div>
+            <div class="service-row"><span>Motor OCR</span><b id="health-ocr">Verificando</b></div>
             <div class="service-row"><span>OpenCV / perspectiva</span><b id="health-cv">Verificando</b></div>
             <div class="service-row"><span>ZXing / QR · PDF417</span><b id="health-zxing">Verificando</b></div>
             <div class="service-row"><span>ORACLE</span><b id="health-oracle">Verificando</b></div>
@@ -153,6 +157,14 @@
       </section>
     </main>
 
+    <dialog class="pair-sheet" id="pair-sheet" aria-label="Emparejar celular">
+      <h3>Escanea con la cámara del celular</h3>
+      <p>Conecta el celular a la misma Wi‑Fi. El código abre la app ya autorizada.</p>
+      <img id="pair-qr" alt="Código QR de emparejamiento" />
+      <p class="pair-url" id="pair-url"></p>
+      <p class="pair-note" id="pair-note"></p>
+      <button class="btn btn-primary" id="pair-close" type="button">Listo</button>
+    </dialog>
     <dialog class="camera-sheet" id="camera-sheet" aria-label="Cámara con encuadre">
       <div class="camera-stage">
         <video id="camera-video" playsinline muted autoplay></video>

@@ -1,5 +1,10 @@
 # Reporte de pruebas
 
+## V4.0 (rama feature/adea-v4-pwa-ocr)
+- Local (Windows, Tesseract 5.4): **81 exitosas, 6 omitidas** (integración con BD real, 6/6 aparte con `ADEA_REAL_DB=1`).
+- CI (GitHub Actions, Ubuntu 24.04, Tesseract del sistema): ver la pestaña *Actions* del repositorio. Limitación hallada por el CI: el MRZ de la muestra sintética se dibuja con la fuente monoespaciada del sistema; con DejaVu Sans Mono Tesseract confunde `<` con `K` y no reconoce la estructura TD1. Esa aserción queda como **XFAIL documentado** solo fuera de Windows; la decodificación QR/PDF417 sí se exige en todas las plataformas.
+- Vercel (motor RapidOCR): verificado en producción con muestras ficticias (ver `docs/V4_TECHNICAL_HANDOFF.md` §8).
+
 ## V3.0 — Integración REAL con bases locales (2026-11-13)
 Comando: `set ADEA_REAL_DB=1 && pytest tests/test_integration_real.py -v` contra Oracle AI Database Free (contenedor oficial, `127.0.0.1:1521/FREEPDB1`) y SQL Server 2025 LocalDB (`(localdb)\ADEA_INE`). Resultado: **6/6 exitosas, 0 fallidas** (82 s).
 

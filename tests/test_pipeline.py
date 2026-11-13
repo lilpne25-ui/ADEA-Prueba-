@@ -55,6 +55,20 @@ def test_electoral_data():
            ("1234", "2020", "2021", "2031")
 
 
+def test_spaceless_ocr_text_from_rapidocr_style_engines():
+    """RapidOCR (motor de la nube) suele omitir espacios; la extracción y la clasificación deben tolerarlo."""
+    text = (f"INSTITUTO NACIONAL ELECTORAL\nCREDENCIALPARAVOTAR\nNOMBRE\nDEMO\nPRUEBA\nANA\nDOMICILIO\n"
+            f"CALLEEJEMPLO 10\nCOLCENTRO50000\nTOLUCA, MEXICO\nCURP{SYNTH['curp']}\n"
+            f"CLAVEDEELECTOR{SYNTH['elector']}\nESTADO 15 SECCION 1234 MUNICIPIO 001 LOCALIDAD 0001\n"
+            "REGISTRO2020EMISION2021VIGENCIA2031")
+    i = info(text)
+    c = i["campos"]
+    assert c["curp"]["valor"] == SYNTH["curp"] and c["clave_elector"]["valor"] == SYNTH["elector"]
+    assert (c["anio_registro"]["valor"], c["emision"]["valor"], c["vigencia"]["valor"]) == ("2020", "2021", "2031")
+    assert c["colonia"]["valor"] == "CENTRO" and c["codigo_postal"]["valor"] == "50000"
+    assert classification.classify(text, i, visual(), True)[0] == classification.INE
+
+
 def test_missing_fields_are_not_invented():
     c = info("INSTITUTO NACIONAL ELECTORAL\nCREDENCIAL PARA VOTAR")["campos"]
     assert all(f["estado"] == v.NO_DETECTADO and f["valor"] is None for f in c.values())
