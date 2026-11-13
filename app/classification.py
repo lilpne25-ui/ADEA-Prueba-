@@ -25,14 +25,19 @@ _LABELS = ("CLAVE DE ELECTOR", "SECCION", "MUNICIPIO", "LOCALIDAD", "EMISION", "
 def classify(text: str, extraction: dict[str, Any], visual: dict[str, Any],
              card_found: bool) -> tuple[str, list[str], dict[str, Any]]:
     t = plain(text)
+    tn = t.replace(" ", "")  # algunos motores OCR (RapidOCR) omiten espacios: se compara también sin ellos
+
+    def has(phrase: str) -> bool:
+        return phrase in t or phrase.replace(" ", "") in tn
+
     campos = extraction["campos"]
     strong: list[str] = []
     structure: list[str] = []
     negative: list[str] = []
 
-    if "INSTITUTO NACIONAL ELECTORAL" in t or "INSTITUTO FEDERAL ELECTORAL" in t:
+    if has("INSTITUTO NACIONAL ELECTORAL") or has("INSTITUTO FEDERAL ELECTORAL"):
         strong.append("Emisor INE/IFE en encabezado")
-    if "CREDENCIAL PARA VOTAR" in t:
+    if has("CREDENCIAL PARA VOTAR"):
         strong.append("Leyenda «CREDENCIAL PARA VOTAR»")
     mrz = extraction["mrz"]
     if mrz.get("lineas_validas") and mrz.get("emisor") == "MEX":
@@ -42,7 +47,7 @@ def classify(text: str, extraction: dict[str, Any], visual: dict[str, Any],
             strong.append("Código QR/PDF417 que referencia al INE")
             break
 
-    labels = [lab for lab in _LABELS if lab in t]
+    labels = [lab for lab in _LABELS if has(lab)]
     if len(labels) >= 3:
         structure.append(f"{len(labels)} etiquetas electorales ({', '.join(labels[:4])}…)")
     if campos["clave_elector"]["estado"] in (v.VALIDADO, v.PENDIENTE):
@@ -59,7 +64,7 @@ def classify(text: str, extraction: dict[str, Any], visual: dict[str, Any],
         structure.append("Bloque de fotografía a la izquierda")
 
     # Documentos que contienen CURP pero son claramente otra cosa.
-    if re.search(r"\b(ACTA DE NACIMIENTO|CONSTANCIA DE SITUACION|CONTRATO|ESCRITURA|LICENCIA)\b", t):
+    if re.search(r"(ACTA ?DE ?NACIMIENTO|CONSTANCIA ?DE ?SITUACION|CONTRATO|ESCRITURA|LICENCIA)", t):
         negative.append("Leyendas de documento ajeno (acta, constancia, contrato, escritura o licencia)")
 
     signals = {"fuertes": len(strong), "estructurales": len(structure), "negativas": len(negative),

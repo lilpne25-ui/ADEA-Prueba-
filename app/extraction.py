@@ -140,8 +140,8 @@ def extract(texts: list[str], mrz_lines: list[str] | None = None,
     """`texts`: lecturas OCR de varias variantes; la primera es la mejor puntuada."""
     best = texts[0] if texts else ""
     lines = [x.strip() for x in best.splitlines() if x.strip()]
-    curp = _pick_identifier(texts, r"\bCURP\b", _CURP_SHAPE, v.CURP_RE, v.validate_curp)
-    elector = _pick_identifier(texts, r"CLAVE\s+DE\s+ELECTOR", _ELECTOR_SHAPE, v.ELECTOR_RE, v.validate_elector)
+    curp = _pick_identifier(texts, r"\bCURP", _CURP_SHAPE, v.CURP_RE, v.validate_curp)
+    elector = _pick_identifier(texts, r"CLAVE\s*DE\s*ELECTOR", _ELECTOR_SHAPE, v.ELECTOR_RE, v.validate_elector)
 
     # --- Nombre: en la credencial cada elemento suele ir en su propia línea (paterno/materno/nombres).
     name_lines = _lines_after(lines, r"\bNOMBRE\b", 3, _STOP)
@@ -163,7 +163,7 @@ def extract(texts: list[str], mrz_lines: list[str] | None = None,
     # --- Domicilio
     home_lines = _lines_after(lines, r"\bDOMICILIO\b", 3, _STOP)
     home_text = " ".join(home_lines) if home_lines else None
-    cp = re.search(r"\b(\d{5})\b", home_text or "")
+    cp = re.search(r"(?<!\d)(\d{5})(?!\d)", home_text or "")
     street = ext = interior = colonia = municipio_dom = estado_dom = None
     if home_lines:
         first = home_lines[0]
@@ -176,7 +176,7 @@ def extract(texts: list[str], mrz_lines: list[str] | None = None,
         else:
             street = first_wo_int or None
         for ln in home_lines[1:]:
-            m_col = re.search(r"\bCOL(?:ONIA)?\.?\s+(.+?)(?:\s+(?:C\.?P\.?\s*)?\d{5})?$", ln)
+            m_col = re.search(r"\bCOL(?:ONIA)?\.?\s*(.+?)(?:\s*(?:C\.?P\.?\s*)?\d{5})?$", ln)
             if m_col and not colonia:
                 colonia = m_col.group(1).strip()
         if len(home_lines) >= 3:
@@ -194,7 +194,8 @@ def extract(texts: list[str], mrz_lines: list[str] | None = None,
                 ext = m_n.group(1) if m_n else None
 
     def electoral(key: str, pattern: str) -> dict[str, Any]:
-        m = re.search(r"\b" + key + r"\s*[:.\-]?\s*(" + pattern + r")\b", plain(best))
+        # (?<![A-Z]) y (?!\d) en lugar de \b: tolera OCR sin espacios ("REGISTRO2020EMISION2021").
+        m = re.search(r"(?<![A-Z])" + key + r"\s*[:.\-]?\s*(" + pattern + r")(?!\d)", plain(best))
         return _text_field(m.group(1) if m else None)
 
     campos = {
@@ -206,7 +207,7 @@ def extract(texts: list[str], mrz_lines: list[str] | None = None,
         "municipio_domicilio": _text_field(municipio_dom), "estado_domicilio": _text_field(estado_dom),
         "estado_electoral": electoral("ESTADO", r"\d{1,2}"), "seccion": electoral(r"SECC?ION", r"\d{1,5}"),
         "municipio_electoral": electoral("MUNICIPIO", r"\d{1,3}"), "localidad": electoral("LOCALIDAD", r"\d{1,4}"),
-        "anio_registro": electoral(r"(?:ANO DE REGISTRO|REGISTRO)", r"\d{4}"),
+        "anio_registro": electoral(r"(?:ANO\s*DE\s*REGISTRO|REGISTRO)", r"\d{4}"),
         "emision": electoral("EMISION", r"\d{4}"),
         "vigencia": electoral("VIGENCIA", r"\d{4}(?:\s*[-/]\s*\d{4})?"),
     }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import statistics
 import subprocess
 from dataclasses import dataclass
@@ -19,14 +20,60 @@ class OcrResult:
     words: int
 
 
+_rapid = None
+
+
+def engine() -> str | None:
+    """Motor OCR disponible. OCR_ENGINE=tesseract|rapidocr fuerza uno; por defecto Tesseract y, si no existe
+    (p. ej. Vercel, donde no se pueden instalar binarios del sistema), RapidOCR (ONNX, 100 % Python/pip)."""
+    wanted = os.getenv("OCR_ENGINE", "auto").lower()
+    if wanted in ("auto", "tesseract") and config.tesseract_cmd():
+        return "tesseract"
+    if wanted in ("auto", "rapidocr"):
+        try:
+            import rapidocr_onnxruntime  # noqa: F401
+            return "rapidocr"
+        except ImportError:
+            return None
+    return None
+
+
 def available() -> bool:
-    return config.tesseract_cmd() is not None
+    return engine() is not None
+
+
+def _run_rapidocr(image: Image.Image) -> OcrResult:
+    """RapidOCR devuelve cajas con texto y probabilidad; se agrupan por renglón (centro vertical)."""
+    global _rapid
+    import numpy as np
+    if _rapid is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _rapid = RapidOCR()
+    result, _ = _rapid(np.asarray(image.convert("RGB")))
+    if not result:
+        return OcrResult("", None, 0)
+    boxes = []
+    for box, text, score in result:
+        ys = [p[1] for p in box]
+        boxes.append(((min(ys) + max(ys)) / 2, max(ys) - min(ys), min(p[0] for p in box), text, float(score)))
+    boxes.sort()
+    lines: list[list[tuple]] = []
+    for b in boxes:
+        if lines and abs(b[0] - lines[-1][0][0]) < max(b[1], lines[-1][0][1]) * 0.5:
+            lines[-1].append(b)
+        else:
+            lines.append([b])
+    text = "\n".join(" ".join(t[3] for t in sorted(line, key=lambda t: t[2])) for line in lines)
+    scores = [b[4] for b in boxes]
+    return OcrResult(text, round(statistics.fmean(scores) * 100, 1), sum(len(b[3].split()) for b in boxes))
 
 
 def run(image: Image.Image, psm: int = 6, whitelist: str | None = None, lang: str | None = None) -> OcrResult:
+    if engine() == "rapidocr":
+        return _run_rapidocr(image)  # psm/whitelist no aplican a RapidOCR
     cmd = config.tesseract_cmd()
     if not cmd:
-        raise RuntimeError("Tesseract no está instalado o no se encuentra en PATH.")
+        raise RuntimeError("No hay motor OCR disponible (instala Tesseract o rapidocr-onnxruntime).")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     args = [cmd, "stdin", "stdout", "-l", lang or config.ocr_lang(), "--psm", str(psm)]
