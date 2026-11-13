@@ -109,7 +109,9 @@ def health():
         "servicio": "operativo", "modo": mode(), "corporativo_configurado": configured(),
         "carga_real_habilitada": upload_enabled(), "entorno": "nube" if cloud else "local",
         "persistencia": {"oracle": status["oracle"], "sqlserver": status["sqlserver"]},
-        "motores": {"tesseract": ocr_engine.available(), "idioma_ocr": config.ocr_lang() if ocr_engine.available() else None,
+        "motores": {"ocr": ocr_engine.engine(), "tesseract": ocr_engine.available(),
+                    "idioma_ocr": config.ocr_lang() if ocr_engine.engine() == "tesseract" else
+                    ("es/en (PP-OCR)" if ocr_engine.engine() else None),
                     "opencv": cv2 is not None, "zxing_qr_pdf417": zxingcpp is not None},
     }
 

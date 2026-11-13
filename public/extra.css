@@ -106,3 +106,5 @@ html,body{overflow-x:hidden}
 .pair-sheet h3{margin:0 0 6px;font-size:18px}.pair-sheet p{font-size:12px;color:#6f7f93;line-height:1.6;margin:0 0 12px}
 .pair-sheet img{width:240px;height:240px;image-rendering:pixelated;border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#fff}
 .pair-url{font-family:Consolas,monospace;color:#1f437e !important}
+
+[hidden]{display:none !important}

@@ -375,7 +375,7 @@ async function boot() {
     el("server-status").textContent = "Motor Python operativo";
     el("mode-badge").textContent = health.modo === "demo" ? "MODO DEMOSTRACIÓN · SIN ESCRITURA" : "MODO CORPORATIVO";
     setHealth("health-api", "Operativo", true);
-    setHealth("health-ocr", health.motores.tesseract ? `Disponible (${health.motores.idioma_ocr})` : "NO instalado: el OCR no funcionará", !!health.motores.tesseract);
+    setHealth("health-ocr", health.motores.ocr ? `${health.motores.ocr === "tesseract" ? "Tesseract" : "RapidOCR (ONNX)"} · ${health.motores.idioma_ocr}` : "Sin motor OCR: el procesamiento no funcionará", !!health.motores.ocr);
     setHealth("health-cv", health.motores.opencv ? "Disponible" : "No instalado (modo básico)", !!health.motores.opencv);
     setHealth("health-zxing", health.motores.zxing_qr_pdf417 ? "Disponible" : "No instalado", !!health.motores.zxing_qr_pdf417);
     const pe = health.persistencia;
